@@ -152,10 +152,10 @@ class AgentTaskAdapter:
                 "type": "合规认证冲突",
                 "message": (
                     f"任务「{self.label(task)}」要求合规认证，"
-                    f"但 Agent「{self.label(agent)}」未通过认证（{self.c.resolve("has_certified")}=false）"
+                    f"但 Agent「{self.label(agent)}」未通过认证（{self.c.resolve('has_certified')}=false）"
                 ),
-                "violated_axiom": f"任务 {self.c.resolve("requires_constraint")} {self.c.compliance_constraint_class} ∧ "
-                                  f"Agent {self.c.resolve("has_certified")}=false 不允许分配",
+                "violated_axiom": f"任务 {self.c.resolve('requires_constraint')} {self.c.compliance_constraint_class} ∧ "
+                                  f"Agent {self.c.resolve('has_certified')}=false 不允许分配",
                 "rule": "R4",
             }
         return None
@@ -342,7 +342,7 @@ class AgentTaskAdapter:
             inferred_types.append({
                 "class": "ComplianceTask",
                 "class_label": "合规任务",
-                "rule": f"分类规则：任务 {self.c.resolve("requires_constraint")} {self.c.compliance_constraint_class} ⇒ ComplianceTask",
+                "rule": f"分类规则：任务 {self.c.resolve('requires_constraint')} {self.c.compliance_constraint_class} ⇒ ComplianceTask",
             })
         if risk_level >= 5:
             inferred_types.append({

@@ -40,6 +40,8 @@ cd ontology-agent-demo
 docker compose up            # 同时起 API(:8000) 和 MCP(:9000)
 ```
 
+> Dockerfile 默认用国内 pip 源（清华 TUNA）加速依赖安装；如需官方源：`docker build --build-arg PIP_INDEX_URL=https://pypi.org/simple -t ontology-agent-demo .`
+
 ### 方式三：手动
 
 ```bash
