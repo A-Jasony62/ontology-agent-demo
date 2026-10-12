@@ -1,0 +1,35 @@
+# 项目元数据 + 可安装包（可选用法：pip install -e .）
+# 依赖清单与 requirements.txt 保持一致；常规快速开始仍用 pip install -r requirements.txt
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ontology-agent-demo"
+version = "1.2.0"
+description = "本体 × 智能体协作 Demo：通用推理引擎 + 领域适配器 + FastAPI + MCP，配套《本体上手指南》"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "yangyue" }]
+keywords = ["ontology", "owl", "reasoning", "mcp", "agent"]
+dependencies = [
+    "owlready2>=0.51",
+    "owlrl>=6.0",
+    "rdflib>=7.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "requests>=2.31",
+    "httpx>=0.27",
+    "mcp>=2.0",
+    "pytest>=8.0",
+]
+
+[project.urls]
+Documentation = "https://github.com/jasony62/ontology-agent-demo"
+
+[tool.setuptools.packages.find]
+include = ["api*", "reasoner*", "domains*", "mcp*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,23 @@
+{
+  "semantic": {
+    "agent_class": "Agent",
+    "task_class": "Task",
+    "simple_task_class": "SimpleTask",
+    "complex_task_class": "ComplexTask",
+    "capability_class": "Capability",
+    "tool_class": "Tool",
+    "constraint_class": "Constraint",
+    "compliance_constraint_class": "ComplianceRequirement",
+    "top_classes": [
+      "Agent",
+      "Task",
+      "Capability",
+      "Tool",
+      "Constraint"
+    ],
+    "hidden_label_classes": [
+      "CertifiedAgent",
+      "ComplianceTask"
+    ]
+  }
+}

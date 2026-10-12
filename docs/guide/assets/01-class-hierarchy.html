@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{width:1200px;height:760px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;overflow:hidden;}
+  .wrap{padding:26px 30px;}
+  .title{font-size:23px;font-weight:700;text-align:center;margin-bottom:2px;}
+  .sub{font-size:14px;color:#6b7280;text-align:center;margin-bottom:20px;}
+  .root{width:170px;margin:0 auto 14px;background:#111827;color:#fff;border-radius:9px;text-align:center;padding:8px 0;font-size:14px;font-weight:700;}
+  .root small{display:block;font-weight:400;font-size:11px;color:#cbd5e1;}
+  .cols{display:flex;gap:14px;justify-content:center;}
+  .col{flex:1;max-width:210px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 10px 12px;}
+  .col-head{font-size:14.5px;font-weight:700;text-align:center;border-radius:8px;padding:7px 4px;margin-bottom:9px;}
+  .col-head small{display:block;font-weight:400;font-size:11px;margin-top:1px;}
+  .node{font-size:12.5px;background:#f8fafc;border:1px solid #d7dde6;border-radius:7px;padding:6px 6px;margin:5px 0;text-align:center;line-height:1.4;position:relative;}
+  .node small{display:block;font-size:10.5px;color:#64748b;}
+  .branch{font-size:12px;color:#9ca3af;text-align:center;line-height:1;}
+  .legend{margin-top:18px;font-size:12.5px;color:#4b5563;text-align:center;background:#eef2f7;border:1px solid #d9e2ec;border-radius:9px;padding:9px 12px;line-height:1.6;}
+  .c0 .col-head{background:#dbeafe;color:#1e40af;} .c0 .col-head small{color:#3b82f6;}
+  .c1 .col-head{background:#dcfce7;color:#166534;} .c1 .col-head small{color:#22c55e;}
+  .c2 .col-head{background:#fef9c3;color:#854d0e;} .c2 .col-head small{color:#ca8a04;}
+  .c3 .col-head{background:#ffe4e6;color:#9f1239;} .c3 .col-head small{color:#f43f5e;}
+  .c4 .col-head{background:#f3e8ff;color:#6b21a8;} .c4 .col-head small{color:#a855f7;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">示例本体的类层次（TBox）</div>
+  <div class="sub">「智能体任务编排」本体 · 5 个顶层类 · 21 个类定义 · 中文名来自 rdfs:label</div>
+  <div class="root">owl:Thing<small>根类（万物之顶）</small></div>
+  <div class="cols">
+    <div class="col c0">
+      <div class="col-head">Agent 智能体<small>谁能干活</small></div>
+      <div class="node">RequirementAgent<small>需求分析Agent类</small></div>
+      <div class="node">DevAgent<small>研发Agent类</small></div>
+      <div class="node" style="margin-left:12px;width:calc(100% - 12px);">JuniorDevAgent<small>初级研发Agent类</small></div>
+      <div class="node">TestAgent<small>测试Agent类</small></div>
+      <div class="node">DeployAgent<small>部署Agent类</small></div>
+    </div>
+    <div class="col c1">
+      <div class="col-head">Task 任务<small>要干什么</small></div>
+      <div class="node">SimpleTask<small>简单任务</small></div>
+      <div class="node">ComplexTask<small>复合任务</small></div>
+    </div>
+    <div class="col c2">
+      <div class="col-head">Capability 能力<small>干活的技能</small></div>
+      <div class="node">RequirementAnalysis<small>需求分析</small></div>
+      <div class="node">Coding<small>编码实现</small></div>
+      <div class="node">CodeReview<small>代码审查</small></div>
+      <div class="node">Testing<small>测试执行</small></div>
+      <div class="node">Deployment<small>部署发布</small></div>
+    </div>
+    <div class="col c3">
+      <div class="col-head">Tool 工具<small>用什么干</small></div>
+      <div class="node">IDE<small>开发环境</small></div>
+      <div class="node">GitRepo<small>代码仓库</small></div>
+      <div class="node">CICD<small>持续集成</small></div>
+      <div class="node">KnowledgeBase<small>知识库</small></div>
+    </div>
+    <div class="col c4">
+      <div class="col-head">Constraint 约束<small>有什么限制</small></div>
+      <div class="node">ComplianceRequirement<small>合规认证要求</small></div>
+      <div class="node">SecurityRequirement<small>安全要求</small></div>
+    </div>
+  </div>
+  <div class="legend">每个类都是 owl:Thing 的后代；箭头方向 = 子类 → 父类（subClassOf）。例如 <b>JuniorDevAgent ⊑ DevAgent ⊑ Agent</b>：初级研发 Agent 也是一种研发 Agent，也是一种智能体——凡适用于"智能体"的规则，对它同样成立。</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{width:1000px;height:380px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;overflow:hidden;}
+  .wrap{padding:30px 34px;}
+  .title{font-size:21px;font-weight:700;text-align:center;margin-bottom:26px;}
+  .row{display:flex;align-items:center;justify-content:center;gap:14px;}
+  .box{border-radius:12px;padding:16px 18px;text-align:center;min-width:210px;}
+  .box .en{font-size:13px;font-weight:700;margin-bottom:5px;}
+  .box .zh{font-size:15px;}
+  .box .note{font-size:11px;color:#6b7280;margin-top:5px;}
+  .s{background:#dbeafe;border:1.5px solid #93c5fd;}
+  .p{background:#dcfce7;border:1.5px solid #86efac;}
+  .o{background:#fef9c3;border:1.5px solid #fde047;}
+  .s .en{color:#1e40af;} .p .en{color:#166534;} .o .en{color:#854d0e;}
+  .arrow{font-size:30px;color:#6b7280;font-weight:700;}
+  .eq{margin:22px auto 0;width:640px;text-align:center;font-size:14.5px;color:#374151;background:#eef2f7;border:1px solid #d9e2ec;border-radius:9px;padding:10px 14px;line-height:1.6;}
+  .eq b{color:#0f4c81;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">一条知识 = 一个三元组</div>
+  <div class="row">
+    <div class="box s"><div class="en">主语 SUBJECT</div><div class="zh">研发Agent</div><div class="note">个体 dev_agent</div></div>
+    <div class="arrow">—→</div>
+    <div class="box p"><div class="en">谓语 PREDICATE</div><div class="zh">具备能力 has_capability</div><div class="note">对象属性（关系）</div></div>
+    <div class="arrow">—→</div>
+    <div class="box o"><div class="en">宾语 OBJECT</div><div class="zh">编码实现</div><div class="note">个体 Coding</div></div>
+  </div>
+  <div class="eq">本体里的知识，归根到底都是这样的三元组：<b>主语 — 谓语 → 宾语</b>。机器按这个结构理解世界，推理也在这个结构上进行。</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{width:1200px;height:820px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;overflow:hidden;}
+  .wrap{padding:22px 26px;}
+  .title{font-size:22px;font-weight:700;text-align:center;margin-bottom:2px;}
+  .sub{font-size:13.5px;color:#6b7280;text-align:center;margin-bottom:18px;}
+  .row{display:flex;gap:16px;align-items:stretch;}
+  .card{flex:1;border-radius:12px;padding:14px 15px;background:#fff;border:1.5px solid #e5e7eb;}
+  .c1{border-color:#93b8ea;} .c2{border-color:#a8d5bd;} .c3{border-color:#e3d77a;}
+  .tag{font-size:13px;font-weight:700;margin-bottom:8px;padding:3px 10px;border-radius:6px;display:inline-block;}
+  .c1 .tag{background:#eff6ff;color:#1e40af;} .c2 .tag{background:#f0faf4;color:#166534;} .c3 .tag{background:#fefce8;color:#854d0e;}
+  .tag small{font-weight:400;color:#6b7280;font-size:11px;margin-left:6px;}
+  .step{font-size:12.5px;line-height:1.65;color:#374151;border-left:3px solid #dbe2ea;padding-left:10px;margin:7px 0;}
+  .step b{color:#111827;}
+  .code{font-family:"SF Mono",Menlo,monospace;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:7px 9px;margin:6px 0;color:#1e3a5f;white-space:pre-wrap;}
+  .note{margin-top:16px;font-size:12.5px;color:#4b5563;background:#eef2f7;border:1px solid #d9e2ec;border-radius:9px;padding:9px 14px;text-align:center;line-height:1.7;}
+  .legend{margin-top:12px;display:flex;justify-content:center;gap:26px;font-size:12px;color:#4b5563;}
+  .legend span b{font-weight:700;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">把本体服务变成你自己的：三条扩展路径</div>
+  <div class="sub">改动量从小到大 · 全部零改核心代码（reasoner/ 不动）</div>
+
+  <div class="row">
+    <div class="card c1">
+      <div class="tag">路径 A · 换同构本体<small>改动最小 · 复用全部领域查询</small></div>
+      <div class="step"><b>1</b> 换 .owl（类/属性名不同，公理结构保留）</div>
+      <div class="step"><b>2</b> 引擎传命名空间（坑：默认 NS 是示例本体的）</div>
+      <div class="code">eng = OntologyEngine("your.owl",<br>    ns="http://example.org/your#")</div>
+      <div class="step"><b>3</b> 语义配置改类角色映射</div>
+      <div class="code">DEFAULT_CONFIG.update(<br>    agent_class="Worker", task_class="Job",<br>    complex_task_class="Pipeline",<br>    has_capability="owns_skill",<br>    requires_capability="needs_skill")</div>
+      <div class="step"><b>4</b> 领域查询（匹配/编排/分配）原样复用</div>
+      <div class="step" style="color:#166534;"><b>实测</b>：agents()=worker_a · tasks()=job_x · 复合任务 pipe_p 识别 ✓</div>
+    </div>
+
+    <div class="card c2">
+      <div class="tag">路径 B · 新建领域<small>异构业务 · 拷贝模板七步</small></div>
+      <div class="step"><b>1</b> 建目录 domains/&lt;name&gt;/，拷贝 agent_task 作模板</div>
+      <div class="step"><b>2</b> 替换本体 .owl（Protege 建模，中文名放 rdfs:label）</div>
+      <div class="step"><b>3</b> 改 config.json 类角色映射</div>
+      <div class="step"><b>4</b> 改 derivation.json 推导链文案</div>
+      <div class="step"><b>5</b> 重写 adapter.py 查询方法，暴露 NAME/DESCRIPTION/ONTO_FILE</div>
+      <div class="step"><b>6</b> （可选）mcp.py 注册领域工具</div>
+      <div class="step"><b>7</b> 验证：list_domains() → load_domain() → mcp --domain 切换</div>
+      <div class="step" style="color:#166534;">引擎 / API / MCP / CLI 全部零改动</div>
+    </div>
+
+    <div class="card c3">
+      <div class="tag">路径 C · 加规则 / 查询<small>在现有领域上增量</small></div>
+      <div class="step"><b>能 OWL 表达</b>（属性链/传递/子类）→ 加进 .owl 公理，owlrl 自动推理</div>
+      <div class="step"><b>需遍历/业务判断</b> → 适配器加方法</div>
+      <div class="step"><b>推导链</b> → derivation.json 加对应 key（否则"为什么"缺文案）</div>
+      <div class="step"><b>暴露出口</b> → API 加端点 或 mcp.py 加 @server.tool</div>
+      <div class="step" style="color:#854d0e;">新查询类型 = 适配器方法 + derivations key + 出口注册（三处联动）</div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span>路径 A：<b>改配置不改代码</b></span>
+    <span>路径 B：<b>新领域包，核心零改动</b></span>
+    <span>路径 C：<b>规则/查询增量三处联动</b></span>
+  </div>
+
+  <div class="note">共同前提：<b>核心层（reasoner/）零领域词汇</b>——所以无论怎么扩展，引擎、API、MCP、CLI 都不用改；你维护的只是「本体 + 配置 + 适配器」。</div>
+</div>
+</body>
+</html>

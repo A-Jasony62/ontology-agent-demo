@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{width:1000px;height:680px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;overflow:hidden;}
+  .wrap{padding:28px 40px;}
+  .title{font-size:21px;font-weight:700;text-align:center;margin-bottom:2px;}
+  .sub{font-size:13.5px;color:#6b7280;text-align:center;margin-bottom:20px;}
+  .chain{width:760px;margin:0 auto;}
+  .step{display:flex;gap:14px;align-items:stretch;margin-bottom:10px;}
+  .kind{flex:0 0 64px;font-size:12px;font-weight:700;text-align:center;border-radius:7px;padding-top:12px;height:52px;align-self:center;}
+  .body{flex:1;background:#fff;border-radius:9px;padding:11px 14px;font-size:14px;line-height:1.5;border:1px solid #e5e7eb;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+  .body .tag{font-size:11px;color:#6b7280;font-weight:400;}
+  .k-section{background:#e5e7eb;color:#374151;}
+  .k-fact{background:#dcfce7;color:#166534;}
+  .k-rule{background:#dbeafe;color:#1e40af;}
+  .k-conclusion{background:#fef9c3;color:#854d0e;}
+  .arrow{text-align:center;color:#9ca3af;font-size:15px;line-height:1;margin:-4px 0 6px 40px;}
+  .foot{margin-top:20px;font-size:12.5px;color:#4b5563;background:#eef2f7;border:1px solid #d9e2ec;border-radius:9px;padding:9px 14px;text-align:center;line-height:1.6;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">推导链：事实 → 规则 → 结论</div>
+  <div class="sub">来自 capability_match（t_login_dev）的真实返回 · 回答"为什么选研发Agent"</div>
+  <div class="chain">
+    <div class="step"><div class="kind k-section">候选</div><div class="body">候选 1：研发Agent <span class="tag">（capability_match 的第一个匹配）</span></div></div>
+    <div class="arrow">↓</div>
+    <div class="step"><div class="kind k-fact">事实</div><div class="body">Agent「研发Agent」具备能力「编码实现」（has_capability）</div></div>
+    <div class="arrow">↓</div>
+    <div class="step"><div class="kind k-fact">事实</div><div class="body">任务「登录模块开发」需要能力「编码实现」（requires_capability）</div></div>
+    <div class="arrow">↓</div>
+    <div class="step"><div class="kind k-rule">规则</div><div class="body">规则 R1（OWL 属性链）：has_capability ◦ required_by ⊑ can_execute</div></div>
+    <div class="arrow">↓</div>
+    <div class="step"><div class="kind k-conclusion">结论</div><div class="body"><b>研发Agent 可执行「登录模块开发」</b></div></div>
+  </div>
+  <div class="foot">这就是 <code>/api/explain</code> 返回的推导链：每条结论都能回溯到事实与规则——<b>确定性 + 可解释</b>由此而来。</div>
+</div>
+</body>
+</html>

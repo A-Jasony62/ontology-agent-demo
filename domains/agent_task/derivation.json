@@ -1,0 +1,288 @@
+{
+  "templates": {
+    "rule_r1": "规则 R1（OWL 属性链）：has_capability ◦ required_by ⊑ can_execute",
+    "rule_r2": "规则 R2（复合任务委派）：Agent 可执行复合任务的全部子任务 ⇒ 可执行复合任务",
+    "rule_r4": "规则 R4（合规约束）：分配前检查任务约束与 Agent 资质",
+    "fact_agent_has_cap": "Agent「{agent}」具备能力「{cap}」（has_capability）",
+    "fact_task_requires_cap": "任务「{task}」需要能力「{cap}」（requires_capability）",
+    "candidate": "候选 {i}：{agent}",
+    "conclusion_can_execute": "结论：{agent} 可执行「{task}」",
+    "no_match": "匹配完成：无可执行该任务的 Agent（可补充能力或人工介入）",
+    "orchestrate_start": "对任务「{task}」拆解执行链（depends_on / composed_of）",
+    "orchestrate_step": "第 {idx} 步：{task} → {executor}",
+    "orchestrate_step_reason": "（{reason}）",
+    "orchestrate_done": "编排完成：按依赖顺序依次执行",
+    "assign_start": "收到分配指令：{task} → {agent}",
+    "conflict_msg": "冲突：{message}",
+    "assign_pass": "通过：无合规冲突，分配有效",
+    "consistency_none": "当前无分配记录",
+    "consistency_count": "当前共有 {n} 条分配记录",
+    "consistency_inconsistent": "结论：本体/规则不一致，建议重新分配或补齐资质",
+    "consistency_ok": "检查完成：未发现冲突",
+    "classify_new": "新增个体「{name}」并重新推理",
+    "classify_type": "分类：{label}（{rule}）",
+    "classify_match": "能力匹配：可执行 Agent 为 {agents}"
+  },
+  "derivations": {
+    "capability_match": [
+      {
+        "if": "$matches",
+        "then": [
+          {
+            "loop": "$matches",
+            "var": "m",
+            "steps": [
+              {
+                "step": {
+                  "kind": "section",
+                  "tpl": "candidate",
+                  "params": {
+                    "i": "$m.i",
+                    "agent": "$m.agent_label"
+                  }
+                }
+              },
+              {
+                "loop": "$m.shared_capability_labels",
+                "var": "cap",
+                "steps": [
+                  {
+                    "step": {
+                      "kind": "fact",
+                      "tpl": "fact_agent_has_cap",
+                      "params": {
+                        "agent": "$m.agent_label",
+                        "cap": "$cap"
+                      }
+                    }
+                  },
+                  {
+                    "step": {
+                      "kind": "fact",
+                      "tpl": "fact_task_requires_cap",
+                      "params": {
+                        "task": "$task_label",
+                        "cap": "$cap"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "step": {
+                  "kind": "rule",
+                  "tpl": "$m.rule_tmpl"
+                }
+              },
+              {
+                "step": {
+                  "kind": "conclusion",
+                  "tpl": "conclusion_can_execute",
+                  "params": {
+                    "agent": "$m.agent_label",
+                    "task": "$task_label"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "else": [
+          {
+            "step": {
+              "kind": "rule",
+              "tpl": "no_match"
+            }
+          }
+        ]
+      }
+    ],
+    "orchestrate": [
+      {
+        "step": {
+          "kind": "fact",
+          "tpl": "orchestrate_start",
+          "params": {
+            "task": "$task_label"
+          }
+        }
+      },
+      {
+        "loop": "$steps",
+        "var": "s",
+        "steps": [
+          {
+            "step": {
+              "kind": "$s.kind",
+              "tpl": "orchestrate_step",
+              "params": {
+                "idx": "$s.idx",
+                "task": "$s.task_label",
+                "executor": "$s.executor_label"
+              }
+            }
+          },
+          {
+            "if": "$s.reason",
+            "then": [
+              {
+                "step": {
+                  "kind": "$s.kind",
+                  "tpl": "orchestrate_step_reason",
+                  "params": {
+                    "reason": "$s.reason"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "step": {
+          "kind": "conclusion",
+          "tpl": "orchestrate_done"
+        }
+      }
+    ],
+    "assign": [
+      {
+        "step": {
+          "kind": "fact",
+          "tpl": "assign_start",
+          "params": {
+            "task": "$task_label",
+            "agent": "$agent_label"
+          }
+        }
+      },
+      {
+        "step": {
+          "kind": "rule",
+          "tpl": "rule_r4"
+        }
+      },
+      {
+        "if": "$conflict",
+        "then": [
+          {
+            "step": {
+              "kind": "conclusion",
+              "tpl": "conflict_msg",
+              "params": {
+                "message": "$conflict.message"
+              }
+            }
+          }
+        ],
+        "else": [
+          {
+            "step": {
+              "kind": "conclusion",
+              "tpl": "assign_pass"
+            }
+          }
+        ]
+      }
+    ],
+    "consistency": [
+      {
+        "if": "$assignments_count",
+        "then": [
+          {
+            "step": {
+              "kind": "fact",
+              "tpl": "consistency_count",
+              "params": {
+                "n": "$assignments_count"
+              }
+            }
+          }
+        ],
+        "else": [
+          {
+            "step": {
+              "kind": "fact",
+              "tpl": "consistency_none"
+            }
+          }
+        ]
+      },
+      {
+        "if": "$conflicts",
+        "then": [
+          {
+            "loop": "$conflicts",
+            "var": "c",
+            "steps": [
+              {
+                "step": {
+                  "kind": "conclusion",
+                  "tpl": "conflict_msg",
+                  "params": {
+                    "message": "$c.message"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "step": {
+              "kind": "rule",
+              "tpl": "consistency_inconsistent"
+            }
+          }
+        ],
+        "else": [
+          {
+            "step": {
+              "kind": "conclusion",
+              "tpl": "consistency_ok"
+            }
+          }
+        ]
+      }
+    ],
+    "classify": [
+      {
+        "step": {
+          "kind": "fact",
+          "tpl": "classify_new",
+          "params": {
+            "name": "$iri_label"
+          }
+        }
+      },
+      {
+        "loop": "$inferred_types",
+        "var": "t",
+        "steps": [
+          {
+            "step": {
+              "kind": "conclusion",
+              "tpl": "classify_type",
+              "params": {
+                "label": "$t.class_label",
+                "rule": "$t.rule"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "if": "$matches_label",
+        "then": [
+          {
+            "step": {
+              "kind": "conclusion",
+              "tpl": "classify_match",
+              "params": {
+                "agents": "$matches_label"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

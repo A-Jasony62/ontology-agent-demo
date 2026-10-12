@@ -1,0 +1,352 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xml:base="http://demo.example.org/agent-task-ontology"
+         xmlns="http://demo.example.org/agent-task-ontology#">
+
+<owl:Ontology rdf:about="http://demo.example.org/agent-task-ontology"/>
+
+<owl:ObjectProperty rdf:about="#has_capability">
+  <rdfs:domain rdf:resource="#Agent"/>
+  <rdfs:range rdf:resource="#Capability"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#requires_capability">
+  <rdfs:domain rdf:resource="#Task"/>
+  <rdfs:range rdf:resource="#Capability"/>
+  <owl:inverseOf rdf:resource="#required_by"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#required_by">
+  <rdfs:domain rdf:resource="#Capability"/>
+  <rdfs:range rdf:resource="#Task"/>
+  <owl:inverseOf rdf:resource="#requires_capability"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#depends_on">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#TransitiveProperty"/>
+  <rdfs:domain rdf:resource="#Task"/>
+  <rdfs:range rdf:resource="#Task"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#composed_of">
+  <rdfs:domain rdf:resource="#ComplexTask"/>
+  <rdfs:range rdf:resource="#Task"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#can_execute">
+  <rdfs:domain rdf:resource="#Agent"/>
+  <rdfs:range rdf:resource="#Task"/>
+  <owl:propertyChainAxiom>
+    <rdf:Description>
+      <rdf:first rdf:resource="#has_capability"/>
+      <rdf:rest>
+        <rdf:Description>
+          <rdf:first rdf:resource="#required_by"/>
+          <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+        </rdf:Description>
+      </rdf:rest>
+    </rdf:Description>
+  </owl:propertyChainAxiom>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#assigned_to">
+  <rdfs:domain rdf:resource="#Task"/>
+  <rdfs:range rdf:resource="#Agent"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#requires_constraint">
+  <rdfs:domain rdf:resource="#Task"/>
+  <rdfs:range rdf:resource="#Constraint"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#uses_tool">
+  <rdfs:domain rdf:resource="#Agent"/>
+  <rdfs:range rdf:resource="#Tool"/>
+</owl:ObjectProperty>
+
+<owl:DatatypeProperty rdf:about="#has_certified">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Agent"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#boolean"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#has_risk_level">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Task"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#has_description">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:Class rdf:about="#Agent">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">智能体</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#RequirementAgent">
+  <rdfs:subClassOf rdf:resource="#Agent"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">需求分析Agent类</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#DevAgent">
+  <rdfs:subClassOf rdf:resource="#Agent"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">研发Agent类</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#JuniorDevAgent">
+  <rdfs:subClassOf rdf:resource="#DevAgent"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">初级研发Agent类</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#TestAgent">
+  <rdfs:subClassOf rdf:resource="#Agent"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">测试Agent类</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#DeployAgent">
+  <rdfs:subClassOf rdf:resource="#Agent"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">部署Agent类</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#Task">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">任务</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#SimpleTask">
+  <rdfs:subClassOf rdf:resource="#Task"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">简单任务</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#ComplexTask">
+  <rdfs:subClassOf rdf:resource="#Task"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">复合任务</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#Capability">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">能力</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#RequirementAnalysis">
+  <rdfs:subClassOf rdf:resource="#Capability"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">需求分析</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#Coding">
+  <rdfs:subClassOf rdf:resource="#Capability"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">编码实现</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#CodeReview">
+  <rdfs:subClassOf rdf:resource="#Capability"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">代码审查</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#Testing">
+  <rdfs:subClassOf rdf:resource="#Capability"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">测试执行</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#Deployment">
+  <rdfs:subClassOf rdf:resource="#Capability"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">部署发布</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#Tool">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">工具</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#IDE">
+  <rdfs:subClassOf rdf:resource="#Tool"/>
+</owl:Class>
+
+<owl:Class rdf:about="#GitRepo">
+  <rdfs:subClassOf rdf:resource="#Tool"/>
+</owl:Class>
+
+<owl:Class rdf:about="#CICD">
+  <rdfs:subClassOf rdf:resource="#Tool"/>
+</owl:Class>
+
+<owl:Class rdf:about="#KnowledgeBase">
+  <rdfs:subClassOf rdf:resource="#Tool"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Constraint">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">约束</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#ComplianceRequirement">
+  <rdfs:subClassOf rdf:resource="#Constraint"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">合规认证要求</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#SecurityRequirement">
+  <rdfs:subClassOf rdf:resource="#Constraint"/>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">安全要求</rdfs:label>
+</owl:Class>
+
+<owl:Class rdf:about="#CertifiedAgent">
+  <rdfs:subClassOf rdf:resource="#Agent"/>
+  <owl:equivalentClass>
+    <owl:Class>
+      <owl:intersectionOf rdf:parseType="Collection">
+        <rdf:Description rdf:about="#Agent"/>
+        <owl:Restriction>
+          <owl:onProperty rdf:resource="#has_certified"/>
+          <owl:hasValue rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</owl:hasValue>
+        </owl:Restriction>
+      </owl:intersectionOf>
+    </owl:Class>
+  </owl:equivalentClass>
+</owl:Class>
+
+<owl:Class rdf:about="#ComplianceTask">
+  <rdfs:subClassOf rdf:resource="#Task"/>
+  <owl:equivalentClass>
+    <owl:Class>
+      <owl:intersectionOf rdf:parseType="Collection">
+        <rdf:Description rdf:about="#Task"/>
+        <owl:Restriction>
+          <owl:onProperty rdf:resource="#requires_constraint"/>
+          <owl:someValuesFrom rdf:resource="#ComplianceRequirement"/>
+        </owl:Restriction>
+      </owl:intersectionOf>
+    </owl:Class>
+  </owl:equivalentClass>
+</owl:Class>
+
+<owl:NamedIndividual rdf:about="#req_agent">
+  <rdf:type rdf:resource="#RequirementAgent"/>
+  <has_capability rdf:resource="#RequirementAnalysis"/>
+  <uses_tool rdf:resource="#KnowledgeBase"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">负责需求分析、用户故事与验收标准编写</has_description>
+  <has_certified rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</has_certified>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">需求分析Agent</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#dev_agent">
+  <rdf:type rdf:resource="#DevAgent"/>
+  <has_capability rdf:resource="#Coding"/>
+  <has_capability rdf:resource="#CodeReview"/>
+  <uses_tool rdf:resource="#IDE"/>
+  <uses_tool rdf:resource="#GitRepo"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">负责编码实现与代码审查，已通过合规认证</has_description>
+  <has_certified rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</has_certified>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">研发Agent</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#junior_dev">
+  <rdf:type rdf:resource="#JuniorDevAgent"/>
+  <has_capability rdf:resource="#Coding"/>
+  <uses_tool rdf:resource="#IDE"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">仅具备编码能力，尚未通过合规认证</has_description>
+  <has_certified rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">false</has_certified>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">初级研发Agent</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#test_agent">
+  <rdf:type rdf:resource="#TestAgent"/>
+  <has_capability rdf:resource="#Testing"/>
+  <uses_tool rdf:resource="#CICD"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">负责测试执行与质量门禁</has_description>
+  <has_certified rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</has_certified>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">测试Agent</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#deploy_agent">
+  <rdf:type rdf:resource="#DeployAgent"/>
+  <has_capability rdf:resource="#Deployment"/>
+  <uses_tool rdf:resource="#CICD"/>
+  <uses_tool rdf:resource="#GitRepo"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">负责生产部署与发布</has_description>
+  <has_certified rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</has_certified>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">部署Agent</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#t_req">
+  <rdf:type rdf:resource="#SimpleTask"/>
+  <requires_capability rdf:resource="#RequirementAnalysis"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">需求分析：新功能用户故事与验收标准</has_description>
+  <has_risk_level rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</has_risk_level>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">需求分析任务</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#t_login_dev">
+  <rdf:type rdf:resource="#SimpleTask"/>
+  <requires_capability rdf:resource="#Coding"/>
+  <depends_on rdf:resource="#t_req"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">登录模块开发</has_description>
+  <has_risk_level rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">2</has_risk_level>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">登录模块开发</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#t_login_review">
+  <rdf:type rdf:resource="#SimpleTask"/>
+  <requires_capability rdf:resource="#CodeReview"/>
+  <depends_on rdf:resource="#t_login_dev"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">登录模块代码审查</has_description>
+  <has_risk_level rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">2</has_risk_level>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">登录模块代码审查</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#t_login_test">
+  <rdf:type rdf:resource="#SimpleTask"/>
+  <requires_capability rdf:resource="#Testing"/>
+  <depends_on rdf:resource="#t_login_review"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">登录模块测试执行</has_description>
+  <has_risk_level rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">3</has_risk_level>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">登录模块测试执行</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#t_deploy">
+  <rdf:type rdf:resource="#SimpleTask"/>
+  <requires_capability rdf:resource="#Deployment"/>
+  <depends_on rdf:resource="#t_login_test"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">生产环境部署发布</has_description>
+  <has_risk_level rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">4</has_risk_level>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">生产部署发布</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#t_compliance_dev">
+  <rdf:type rdf:resource="#SimpleTask"/>
+  <requires_capability rdf:resource="#Coding"/>
+  <requires_constraint rdf:resource="#ComplianceRequirement"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">涉及敏感数据的报表开发（需合规认证）</has_description>
+  <has_risk_level rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">5</has_risk_level>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">敏感数据报表开发</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#t_feature">
+  <rdf:type rdf:resource="#ComplexTask"/>
+  <composed_of rdf:resource="#t_req"/>
+  <composed_of rdf:resource="#t_login_dev"/>
+  <composed_of rdf:resource="#t_login_review"/>
+  <composed_of rdf:resource="#t_login_test"/>
+  <composed_of rdf:resource="#t_deploy"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">新功能上线：需求 → 开发 → 审查 → 测试 → 部署</has_description>
+  <has_risk_level rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">4</has_risk_level>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">新功能上线（复合任务）</rdfs:label>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#t_double_dev">
+  <rdf:type rdf:resource="#ComplexTask"/>
+  <composed_of rdf:resource="#t_login_dev"/>
+  <composed_of rdf:resource="#t_compliance_dev"/>
+  <has_description rdf:datatype="http://www.w3.org/2001/XMLSchema#string">双模块开发：登录模块 + 合规报表模块</has_description>
+  <has_risk_level rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">4</has_risk_level>
+  <rdfs:label rdf:datatype="http://www.w3.org/2001/XMLSchema#string">双模块开发（复合任务）</rdfs:label>
+</owl:NamedIndividual>
+
+
+</rdf:RDF>

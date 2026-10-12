@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{width:1200px;height:920px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;overflow:hidden;}
+  .wrap{position:relative;width:1200px;height:920px;padding:0;}
+  .head{position:absolute;top:14px;left:0;width:100%;text-align:center;}
+  .head .t{font-size:22px;font-weight:700;}
+  .head .s{font-size:13.5px;color:#6b7280;margin-top:2px;}
+  svg.lines{position:absolute;top:0;left:0;width:1200px;height:920px;}
+  .card{position:absolute;border-radius:10px;padding:9px 12px;box-shadow:0 1px 2px rgba(0,0,0,.05);}
+  .card .en{font-size:13px;font-weight:700;}
+  .card .zh{font-size:12px;color:#4b5563;margin-top:2px;line-height:1.4;}
+  .ag{width:170px;background:#f0faf4;border:1.5px solid #86c9a6;}
+  .ag .en{color:#166534;}
+  .cap{width:170px;background:#fefce8;border:1.5px solid #e3d77a;text-align:center;}
+  .cap .en{color:#854d0e;}
+  .task{width:240px;background:#eff6ff;border:1.5px solid #93b8ea;}
+  .task .en{color:#1e40af;}
+  .tag{display:inline-block;font-size:10px;color:#6b7280;background:#fff;border:1px solid #dbe2ea;border-radius:4px;padding:1px 5px;margin:3px 3px 0 0;}
+  .legend{position:absolute;bottom:12px;left:0;width:100%;display:flex;justify-content:center;gap:22px;font-size:12.5px;color:#4b5563;background:#fff;border:1px solid #e5e7eb;border-radius:9px;padding:8px 12px;width:96%;left:2%;}
+  .lg{display:flex;align-items:center;gap:6px;}
+  .ln{display:inline-block;width:26px;height:0;border-top:2.5px solid;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="t">示例本体的个体与关系全景（ABox）</div>
+    <div class="s">5 个智能体 · 8 个任务 · 5 个能力 · 连线 = 属性关系 · 13 个个体</div>
+  </div>
+
+  <svg class="lines" viewBox="0 0 1200 920">
+    <!-- has_capability 绿：智能体(250,y) -> 能力(415,y) -->
+    <g fill="none" stroke="#22c55e" stroke-width="1.8" opacity="0.75">
+      <path d="M250 130 C 332 130, 333 130, 415 130"/>
+      <path d="M250 258 C 332 258, 333 258, 415 258"/>
+      <path d="M250 258 C 332 330, 333 330, 415 386"/>
+      <path d="M250 386 C 332 386, 333 386, 415 258"/>
+      <path d="M250 514 C 332 514, 333 514, 415 490"/>
+      <path d="M250 642 C 332 642, 333 642, 415 642"/>
+    </g>
+    <!-- requires_capability 蓝：任务(760,y) -> 能力(585,y) -->
+    <g fill="none" stroke="#3b82f6" stroke-width="1.8" opacity="0.7">
+      <path d="M760 95 C 672 95, 673 130, 585 130"/>
+      <path d="M760 185 C 672 185, 673 258, 585 258"/>
+      <path d="M760 275 C 672 275, 673 386, 585 386"/>
+      <path d="M760 365 C 672 365, 673 490, 585 490"/>
+      <path d="M760 455 C 672 455, 673 642, 585 642"/>
+      <path d="M760 545 C 672 545, 673 258, 585 258"/>
+    </g>
+    <!-- depends_on 灰虚线：任务内部纵向 -->
+    <g fill="none" stroke="#9ca3af" stroke-width="1.6" stroke-dasharray="5,4" opacity="0.85">
+      <path d="M960 150 L 960 171" marker-end="url(#arwG)"/>
+      <path d="M960 240 L 960 261" marker-end="url(#arwG)"/>
+      <path d="M960 330 L 960 351" marker-end="url(#arwG)"/>
+      <path d="M960 420 L 960 441" marker-end="url(#arwG)"/>
+    </g>
+    <!-- composed_of 橙虚线：复合任务 -> 子任务 -->
+    <g fill="none" stroke="#f59e0b" stroke-width="1.6" stroke-dasharray="6,3" opacity="0.8">
+      <path d="M760 650 C 710 650, 710 95, 770 95"/>
+      <path d="M760 650 C 710 650, 710 185, 770 185"/>
+      <path d="M760 650 C 710 650, 710 275, 770 275"/>
+      <path d="M760 650 C 710 650, 710 365, 770 365"/>
+      <path d="M760 650 C 710 650, 710 455, 770 455"/>
+      <path d="M760 745 C 710 745, 710 185, 770 185"/>
+      <path d="M760 745 C 710 745, 710 545, 770 545"/>
+    </g>
+    <defs>
+      <marker id="arwG" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0 0 L6 3.5 L0 7 Z" fill="#9ca3af"/></marker>
+    </defs>
+  </svg>
+
+  <!-- 智能体 -->
+  <div class="card ag" style="left:80px;top:86px;"><div class="en">req_agent</div><div class="zh">需求分析Agent<br><span class="tag">需求分析</span><span class="tag">知识库</span></div></div>
+  <div class="card ag" style="left:80px;top:214px;"><div class="en">dev_agent</div><div class="zh">研发Agent<br><span class="tag">编码</span><span class="tag">审查</span><span class="tag">IDE</span><span class="tag">仓库</span></div></div>
+  <div class="card ag" style="left:80px;top:342px;"><div class="en">junior_dev</div><div class="zh">初级研发Agent<br><span class="tag">编码</span><span class="tag">IDE</span></div></div>
+  <div class="card ag" style="left:80px;top:470px;"><div class="en">test_agent</div><div class="zh">测试Agent<br><span class="tag">测试</span><span class="tag">CICD</span></div></div>
+  <div class="card ag" style="left:80px;top:598px;"><div class="en">deploy_agent</div><div class="zh">部署Agent<br><span class="tag">部署</span><span class="tag">CICD</span><span class="tag">仓库</span></div></div>
+
+  <!-- 能力 -->
+  <div class="card cap" style="left:415px;top:100px;"><div class="en">RequirementAnalysis</div><div class="zh">需求分析</div></div>
+  <div class="card cap" style="left:415px;top:228px;"><div class="en">Coding</div><div class="zh">编码实现</div></div>
+  <div class="card cap" style="left:415px;top:356px;"><div class="en">CodeReview</div><div class="zh">代码审查</div></div>
+  <div class="card cap" style="left:415px;top:460px;"><div class="en">Testing</div><div class="zh">测试执行</div></div>
+  <div class="card cap" style="left:415px;top:612px;"><div class="en">Deployment</div><div class="zh">部署发布</div></div>
+
+  <!-- 任务 -->
+  <div class="card task" style="left:760px;top:53px;"><div class="en">t_req</div><div class="zh">需求分析任务 <span class="tag">需要:需求分析</span></div></div>
+  <div class="card task" style="left:760px;top:143px;"><div class="en">t_login_dev</div><div class="zh">登录模块开发 <span class="tag">需要:编码</span><span class="tag">依赖 t_req</span></div></div>
+  <div class="card task" style="left:760px;top:233px;"><div class="en">t_login_review</div><div class="zh">登录模块代码审查 <span class="tag">需要:审查</span><span class="tag">依赖 t_login_dev</span></div></div>
+  <div class="card task" style="left:760px;top:323px;"><div class="en">t_login_test</div><div class="zh">登录模块测试执行 <span class="tag">需要:测试</span><span class="tag">依赖 t_login_review</span></div></div>
+  <div class="card task" style="left:760px;top:413px;"><div class="en">t_deploy</div><div class="zh">生产部署发布 <span class="tag">需要:部署</span><span class="tag">依赖 t_login_test</span></div></div>
+  <div class="card task" style="left:760px;top:503px;"><div class="en">t_compliance_dev</div><div class="zh">敏感数据报表开发 <span class="tag">需要:编码</span><span class="tag">合规认证</span></div></div>
+  <div class="card task" style="left:760px;top:608px;"><div class="en">t_feature</div><div class="zh">新功能上线（复合） <span class="tag">由 5 个子任务组成</span></div></div>
+  <div class="card task" style="left:760px;top:703px;"><div class="en">t_double_dev</div><div class="zh">双模块开发（复合） <span class="tag">由 2 个子任务组成</span></div></div>
+
+  <div class="legend">
+    <span class="lg"><span class="ln" style="border-color:#22c55e;"></span>has_capability 智能体→能力</span>
+    <span class="lg"><span class="ln" style="border-color:#3b82f6;"></span>requires_capability 任务→能力</span>
+    <span class="lg"><span class="ln" style="border-color:#9ca3af;border-top-style:dashed;"></span>depends_on 任务依赖（传递）</span>
+    <span class="lg"><span class="ln" style="border-color:#f59e0b;border-top-style:dashed;"></span>composed_of 复合任务→子任务</span>
+  </div>
+</div>
+</body>
+</html>

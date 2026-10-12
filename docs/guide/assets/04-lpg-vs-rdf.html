@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{width:1200px;height:660px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;overflow:hidden;}
+  .wrap{padding:26px 32px;}
+  .title{font-size:22px;font-weight:700;text-align:center;margin-bottom:2px;}
+  .sub{font-size:13.5px;color:#6b7280;text-align:center;margin-bottom:18px;}
+  .cols{display:flex;gap:18px;}
+  .card{flex:1;border-radius:13px;padding:18px 20px;}
+  .lpg{background:#fef6ee;border:1.5px solid #e8c9a0;}
+  .rdf{background:#f0faf4;border:1.5px solid #a8d5bd;}
+  .card-head{font-size:16px;font-weight:700;margin-bottom:4px;}
+  .lpg .card-head{color:#b45309;} .rdf .card-head{color:#166534;}
+  .alias{font-size:12px;color:#6b7280;margin-bottom:12px;}
+  .graph{background:#fff;border-radius:10px;padding:14px;min-height:190px;position:relative;margin-bottom:12px;}
+  .node{display:inline-block;border-radius:50%;text-align:center;font-size:12px;padding:10px 4px;width:86px;position:absolute;}
+  .lpg .node{border:1.5px solid #e3b778;background:#fffaf2;color:#92400e;}
+  .rdf .node{border:1.5px solid #7cc29a;background:#f4fbf7;color:#14532d;}
+  .lbl{position:absolute;font-size:10.5px;color:#6b7280;}
+  .edge-txt{position:absolute;font-size:11px;color:#4b5563;background:#fff;padding:1px 5px;border-radius:4px;}
+  .dash{position:absolute;font-size:11px;color:#b45309;background:#fefce8;padding:1px 5px;border-radius:4px;}
+  .marks{font-size:12.5px;line-height:1.9;}
+  .marks .t{font-weight:700;}
+  .lpg .marks .t{color:#b45309;} .rdf .marks .t{color:#166534;}
+  .marks div{display:flex;gap:7px;}
+  .divider{margin:16px 0 0;display:flex;justify-content:center;gap:26px;align-items:center;background:#eef2f7;border:1px solid #d9e2ec;border-radius:10px;padding:11px 16px;font-size:14px;font-weight:700;}
+  .divider .a{color:#b45309;} .divider .b{color:#166534;} .divider .vs{color:#9ca3af;font-size:12px;}
+  .foot{margin-top:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px 16px;font-size:13.5px;color:#374151;text-align:center;line-height:1.6;}
+  .foot b{color:#0f4c81;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">本体 vs 知识图谱：都是图，差在哪</div>
+  <div class="sub">属性图（LPG）与语义图（RDF/OWL）· 分水岭是"推理"</div>
+  <div class="cols">
+    <div class="card lpg">
+      <div class="card-head">属性图 LPG</div>
+      <div class="alias">Neo4j · TigerGraph · 图数据库</div>
+      <div class="graph" style="height:200px;">
+        <div class="node" style="left:22px;top:30px;">用户A</div>
+        <div class="node" style="left:150px;top:110px;">用户B</div>
+        <div class="node" style="left:278px;top:30px;">商品C</div>
+        <div class="edge-txt" style="left:70px;top:110px;">FOLLOWS</div>
+        <div class="edge-txt" style="left:222px;top:66px;">LIKES</div>
+        <div class="lbl" style="left:30px;top:96px;">关注</div>
+        <div class="lbl" style="left:280px;top:96px;">喜欢</div>
+      </div>
+      <div class="marks">
+        <div><span class="t">数据模型</span><span>节点 + 关系 + 属性（键值）</span></div>
+        <div><span class="t">Schema</span><span>弱：节点只有标签，无类层次</span></div>
+        <div><span class="t">标识</span><span>节点 ID，局部有效</span></div>
+        <div><span class="t">查询</span><span>Cypher：沿边遍历</span></div>
+        <div><span class="t">推理</span><span>✗ 一般不支持</span></div>
+      </div>
+    </div>
+    <div class="card rdf">
+      <div class="card-head">语义图 RDF / OWL</div>
+      <div class="alias">rdflib · owlrl · 知识图谱/本体</div>
+      <div class="graph" style="height:200px;">
+        <div class="node" style="left:22px;top:34px;">dev_agent<br><span style="font-size:10px;">类型:Agent</span></div>
+        <div class="node" style="left:150px;top:112px;">Coding<br><span style="font-size:10px;">类型:Capability</span></div>
+        <div class="node" style="left:278px;top:34px;">t_login_dev<br><span style="font-size:10px;">类型:Task</span></div>
+        <div class="edge-txt" style="left:62px;top:112px;">has_capability</div>
+        <div class="edge-txt" style="left:216px;top:112px;">requires_capability</div>
+        <div class="dash" style="left:130px;top:20px;">can_execute（推理）</div>
+      </div>
+      <div class="marks">
+        <div><span class="t">数据模型</span><span>三元组（主语-谓语-宾语）</span></div>
+        <div><span class="t">Schema</span><span>强：类层次 + 属性定义（TBox）</span></div>
+        <div><span class="t">标识</span><span>IRI，全局唯一</span></div>
+        <div><span class="t">查询</span><span>SPARQL：模式匹配</span></div>
+        <div><span class="t">推理</span><span>✓ 支持（OWL 公理自动推导）</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="divider">
+    <span class="a">图数据库 → 回答"已知"</span>
+    <span class="vs">VS</span>
+    <span class="b">本体 → 回答"隐含"（推出来的）</span>
+  </div>
+  <div class="foot">本项目<b>两者兼有</b>：<code>/api/query</code>（SPARQL 图查询，答"已知"）+ <code>/api/reason</code>（推理，答"隐含"，附推导链）。</div>
+</div>
+</body>
+</html>

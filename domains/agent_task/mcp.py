@@ -1,0 +1,54 @@
+"""「智能体任务编排」领域 MCP 工具注册（领域相关代码，随领域包走）。
+
+MCP Server（mcp/mcp_server.py）是通用出口层，启动时动态加载本模块，
+把 8 个领域工具注册到 server；换领域 = 换领域包（新领域须提供同构的 mcp.py，
+暴露 register_tools(server, adapter)）。
+"""
+
+from mcp.server.mcpserver import MCPServer
+
+from reasoner.engine import local
+
+
+def register_tools(server: MCPServer, adapter) -> None:
+    """把本领域的 MCP 工具注册到 server。adapter 为领域适配器实例（domains.<name>.create_adapter 的产物）。"""
+
+    @server.tool(description="能力匹配（R1/R2）：查询哪些智能体可执行指定任务，返回匹配列表与推导链。task 为本体个体短名，如 t_login_dev、t_compliance_dev、t_double_dev。")
+    def capability_match(task: str) -> dict:
+        return adapter.capability_match(adapter.NS[task])
+
+    @server.tool(description="任务编排（R3）：对（复合）任务拆解依赖链、按拓扑排序并逐环节匹配执行者，返回有序执行计划。task 如 t_feature（新功能上线）、t_double_dev。")
+    def orchestrate(task: str) -> dict:
+        return adapter.orchestrate(adapter.NS[task])
+
+    @server.tool(description="任务分配 + R4 合规冲突检测：将任务分配给智能体，若任务要求合规认证而智能体未认证则返回冲突报告。task/agent 为本体个体短名，agent 如 dev_agent、junior_dev。")
+    def assign(task: str, agent: str) -> dict:
+        return adapter.assign(adapter.NS[task], adapter.NS[agent])
+
+    @server.tool(description="新增任务个体并自动分类：按所需能力与约束创建任务，重新推理后返回推理出的类型（合规任务/高风险任务）与可执行智能体。capabilities 如 ['Coding']，constraints 如 ['ComplianceRequirement']。")
+    def classify(name: str, capabilities: list[str], constraints: list[str], risk_level: int = 3) -> dict:
+        return adapter.classify(name, capabilities, constraints, risk_level)
+
+    @server.tool(description="全量一致性 / 合规冲突检查：遍历当前所有分配记录，返回冲突清单与高风险无人可执行提示。")
+    def consistency() -> dict:
+        return adapter.consistency()
+
+    @server.tool(description="推导链解释：返回最近一次查询（能力匹配/编排/分配/一致性）的中文推导链，用于回答“为什么”。")
+    def explain() -> dict:
+        return adapter.explain()
+
+    @server.tool(description="本体结构导出：返回类层次、个体（智能体/任务）与全部边（能力/依赖/推理结论/分配），供图谱渲染或结构问答。")
+    def ontology() -> dict:
+        return adapter.graph_export()
+
+    @server.tool(description="实体清单：返回本体中可用的任务/智能体/能力/约束短名及中文标签，帮助确定其它工具的参数取值。")
+    def entities() -> dict:
+        by_parent: dict[str, list[str]] = {}
+        for c in adapter.engine.classes():
+            by_parent.setdefault(c["parent"], []).append(c["name"])
+        return {
+            "tasks": [{"name": local(t), "label": adapter.label(t)} for t in adapter.tasks()],
+            "agents": [{"name": local(a), "label": adapter.label(a)} for a in adapter.agents()],
+            "capabilities": sorted(by_parent.get(adapter.c.capability_class, [])),
+            "constraints": sorted(by_parent.get(adapter.c.constraint_class, [])),
+        }

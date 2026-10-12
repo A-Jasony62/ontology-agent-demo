@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{width:1200px;height:600px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;overflow:hidden;}
+  .wrap{padding:26px 34px;}
+  .title{font-size:22px;font-weight:700;text-align:center;margin-bottom:2px;}
+  .sub{font-size:13.5px;color:#6b7280;text-align:center;margin-bottom:22px;}
+  .stage{display:flex;align-items:flex-start;justify-content:center;gap:16px;}
+  .col{flex:1;text-align:center;}
+  .col-name{font-size:14px;font-weight:700;color:#374151;margin-bottom:10px;}
+  .ent{background:#fff;border-radius:10px;padding:12px;margin-bottom:10px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+  .ent .en{font-size:13.5px;font-weight:700;}
+  .ent .zh{font-size:12px;color:#4b5563;margin-top:2px;}
+  .facts{margin-top:6px;font-size:11.5px;color:#166534;background:#f0faf4;border:1px solid #bfe3cf;border-radius:7px;padding:6px 8px;line-height:1.5;}
+  .rule-bar{margin:24px 0 6px;background:#eef2f7;border:1px solid #d9e2ec;border-radius:10px;padding:12px 16px;text-align:center;font-size:14.5px;}
+  .rule-bar b{color:#b45309;}
+  .rule-bar .code{font-family:"SF Mono",Menlo,monospace;font-size:13.5px;background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:3px 8px;}
+  .concl{margin:14px 0 0;background:#fefce8;border:1.5px solid #facc15;border-radius:10px;padding:12px 16px;text-align:center;font-size:15px;font-weight:700;color:#854d0e;}
+  .concl small{display:block;font-weight:400;font-size:12px;color:#6b7280;margin-top:3px;}
+  .arrowline{display:flex;align-items:center;justify-content:center;gap:8px;font-size:12.5px;color:#4b5563;margin:6px 0;}
+  .ln{display:inline-block;width:56px;height:0;border-top:2.5px solid;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">R1 能力匹配：属性链如何推出结论</div>
+  <div class="sub">以「登录模块开发」为例 · can_execute 在原始 .owl 中 0 条，推理后 8 条</div>
+
+  <div class="stage">
+    <div class="col">
+      <div class="col-name">智能体（Agent）</div>
+      <div class="ent" style="border:1.5px solid #86c9a6;"><div class="en" style="color:#166534;">dev_agent</div><div class="zh">研发Agent</div></div>
+      <div class="arrowline"><span class="ln" style="border-color:#22c55e;"></span> has_capability</div>
+      <div class="ent" style="border:1.5px solid #93b8ea;"><div class="en" style="color:#1e40af;">t_login_dev</div><div class="zh">登录模块开发</div></div>
+    </div>
+    <div class="col" style="max-width:300px;">
+      <div class="col-name">能力（Capability）</div>
+      <div class="ent" style="border:1.5px solid #e3d77a;"><div class="en" style="color:#854d0e;">Coding</div><div class="zh">编码实现</div></div>
+      <div class="facts">两条事实：<br>① dev_agent 具备 Coding<br>② t_login_dev 需要 Coding</div>
+    </div>
+    <div class="col">
+      <div class="col-name">任务（Task）</div>
+      <div class="ent" style="border:1.5px solid #93b8ea;"><div class="en" style="color:#1e40af;">t_login_dev</div><div class="zh">登录模块开发</div></div>
+      <div class="arrowline"><span class="ln" style="border-color:#3b82f6;"></span> requires_capability</div>
+      <div class="ent" style="border:1.5px solid #86c9a6;"><div class="en" style="color:#166534;">dev_agent</div><div class="zh">研发Agent</div></div>
+    </div>
+  </div>
+
+  <div class="rule-bar">
+    推理规则（本体公理）：<span class="code">has_capability ◦ required_by ⊑ can_execute</span>
+    <span style="margin-left:10px;color:#6b7280;font-size:12.5px;">（required_by 是 requires_capability 的逆属性：能力"被…需要"）</span>
+  </div>
+
+  <div class="concl">
+    推理结论（自动产生，无需手写）<br>
+    dev_agent — can_execute → t_login_dev　<small>研发Agent 可执行「登录模块开发」（0 → 8 条中的一条）</small>
+  </div>
+</div>
+</body>
+</html>

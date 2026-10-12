@@ -1,0 +1,36 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---------- 运行时 / 配置 ----------
+*.log
+*.pid
+*.local
+
+# 本地服务状态（如有）
+.runtime/
+
+# ---------- macOS ----------
+.DS_Store
+
+# ---------- IDE / 编辑器 ----------
+.idea/
+.vscode/
+*.swp
+
+# ---------- 文档构建 ----------
+site/
