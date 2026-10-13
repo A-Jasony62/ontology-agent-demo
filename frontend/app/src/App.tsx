@@ -9,6 +9,7 @@ import ImportModal from './components/ImportModal';
 import ExportDialog from './components/ExportDialog';
 import Designer from './components/Designer';
 import MaterializedPanel from './components/MaterializedPanel';
+import ServiceGuideModal from './components/ServiceGuideModal';
 
 type SourceMode = 'closed' | 'view' | 'edit';
 
@@ -31,6 +32,7 @@ export default function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [sourceMode, setSourceMode] = useState<SourceMode>('closed');
   const [designerOpen, setDesignerOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   // 挂载初始化：健康检查 + 物化数据 + 源码解析为可编辑模型
   useEffect(() => {
@@ -72,6 +74,7 @@ export default function App() {
           <button className={designerOpen ? '' : 'secondary'} onClick={() => setDesignerOpen((v) => !v)}>
             {designerOpen ? '关闭编辑器' : '可视化编辑'}
           </button>
+          <button className="secondary" onClick={() => setGuideOpen(true)}>服务能力</button>
         </div>
         <span className={`health ${backendOk ? 'ok' : ''}`}>{backendOk ? '后端已连接' : '后端未连接'}</span>
       </header>
@@ -108,6 +111,7 @@ export default function App() {
 
       {importOpen && <ImportModal onClose={() => setImportOpen(false)} />}
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
+      {guideOpen && <ServiceGuideModal onClose={() => setGuideOpen(false)} />}
       {sourceMode !== 'closed' && (
         <SourceView mode={sourceMode} onClose={() => setSourceMode('closed')} onSwitchToEdit={() => setSourceMode('edit')} />
       )}
