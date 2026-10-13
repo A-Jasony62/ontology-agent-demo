@@ -32,9 +32,10 @@ def test_ontology():
 
 
 def test_index_page():
+    # GET / 优先返回新前端（frontend/app/dist，Vite 构建）；未构建时回退旧单页
     r = client.get("/")
     assert r.status_code == 200
-    assert "本体图谱展示" in r.text
+    assert ("本体图谱工作台" in r.text) or ("本体图谱展示" in r.text)
 
 
 # ---------- 推理端点 ----------

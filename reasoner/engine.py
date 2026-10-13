@@ -217,11 +217,25 @@ class OntologyEngine:
         def ensure_node(iri: URIRef) -> str:
             key = local(iri)
             if key not in nodes:
-                kind = "class" if (iri, RDF.type, OWL.Class) in graph else "individual"
+                if (iri, RDF.type, OWL.Class) in graph:
+                    kind = "class"
+                    types = [
+                        local(o)
+                        for o in graph.objects(iri, RDFS.subClassOf)
+                        if isinstance(o, URIRef) and o != OWL.Thing
+                    ]
+                else:
+                    kind = "individual"
+                    types = [
+                        local(o)
+                        for o in graph.objects(iri, RDF.type)
+                        if isinstance(o, URIRef) and o != OWL.NamedIndividual
+                    ]
                 nodes[key] = {
                     "id": key,
                     "label": self.label(iri),
                     "type": kind,
+                    "types": types,
                 }
             return key
 

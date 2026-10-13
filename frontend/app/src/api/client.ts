@@ -7,6 +7,8 @@ export interface GraphNode {
   id: string;
   label: string;
   type: 'class' | 'individual' | 'property' | string;
+  /** 个体 → 所属类型（rdf:type）；类 → 父类（rdfs:subClassOf）的短名列表 */
+  types?: string[];
 }
 
 export interface GraphEdge {
