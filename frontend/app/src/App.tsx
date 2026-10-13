@@ -20,6 +20,7 @@ export default function App() {
   const setOntology = useAppStore((s) => s.setOntology);
   const setGraphData = useAppStore((s) => s.setGraphData);
   const setError = useAppStore((s) => s.setError);
+  const setSelectedId = useAppStore((s) => s.setSelectedId);
   const error = useAppStore((s) => s.error);
   const materialized = useAppStore((s) => s.materialized);
   const graphData = useAppStore((s) => s.graphData);
@@ -93,6 +94,7 @@ export default function App() {
                 viewMode={viewMode}
                 asserted={viewMode === 'diff' ? null : graphData ?? materialized.asserted}
                 inferred={materialized.inferred}
+                onSelect={(id) => setSelectedId(id)}
               />
             </div>
             <div style={{ flex: '0 1 300px', minWidth: 260 }}>
