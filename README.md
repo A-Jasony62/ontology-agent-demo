@@ -69,6 +69,28 @@ make demo                                  # 按顺序跑一遍核心接口（�
 
 > `make` 命令清单：`make setup` / `make run` / `make mcp` / `make test` / `make demo` / `make build-ontology` / `make docs`。
 
+## 前端应用（本体图谱工作台）
+
+`frontend/app/` 是基于 [Microsoft Ontology-Playground](https://github.com/microsoft/Ontology-Playground)（MIT）代码实现的功能完整前端：
+
+- **图谱工作台**：Cytoscape.js 交互图谱，三种视图——原始断言 / 物化后（并集）/ 仅差异；推理新增边以虚线+独立色标注
+- **OWL 源码**：RDF/XML 源码语法高亮查看，支持源码编辑（保存时解析校验回读）
+- **导入 / 导出**：拖拽上传 `.owl`/`.rdf` 解析展示；导出当前模型（RDF/XML）或物化后本体（Turtle / RDF/XML）
+- **可视化编辑**：实体 / 属性 / 关系 CRUD + 实时校验，改动即时反映到图谱
+- **物化展示**：调用推理引擎物化 diff（原始断言 ∪ 推理新增），统计卡片显示三元组数量变化
+
+```bash
+# 开发（先启动后端 :8000）
+cd frontend/app
+npm install
+npm run dev                 # http://localhost:5173（/api 自动代理到 :8000）
+
+# 生产构建（构建后由 FastAPI 托管，GET / 优先返回新前端）
+npm run build               # 产物 frontend/app/dist
+```
+
+> 说明：导入自定义本体后点击「同步到推理引擎」进入通用模式——图谱 / 物化 / SPARQL 等通用能力可用，领域推理（R1–R4）仅默认本体可用（接口返回明确提示）。
+
 ## 架构
 
 ```

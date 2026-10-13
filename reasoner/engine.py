@@ -38,6 +38,10 @@ class OntologyEngine:
         self.onto_path = onto_path
         self.NS = Namespace(ns or DEFAULT_NS)
 
+        # 原始断言快照（未推理）——供物化 diff（推理新增 = 推理后图 − 原始图）
+        self.raw = Graph()
+        self.raw.parse(onto_path, format="xml")
+
         self.g = Graph()
         self.g.parse(onto_path, format="xml")
         # L1：OWL 2 RL 推理（属性链、传递闭包、子类/等价类分类）
@@ -179,6 +183,99 @@ class OntologyEngine:
             "classes": len(self.classes()),
             "individuals": len(set(self.g.subjects(RDF.type, OWL.NamedIndividual))),
         }
+
+    # ---------------- 物化（Materialization）与图谱导出（通用，与领域语义无关） ----------------
+
+    # 图谱导出时排除的元谓词（rdf/rdfs/owl 结构词汇）
+    META_PREDICATE_NAMES = {
+        "type", "subClassOf", "subPropertyOf", "label", "comment", "domain", "range",
+        "equivalentClass", "equivalentProperty", "inverseOf", "sameAs", "disjointWith",
+        "intersectionOf", "unionOf", "complementOf", "oneOf", "first", "rest",
+        "someValuesFrom", "allValuesFrom", "hasValue", "onProperty",
+        "cardinality", "minCardinality", "maxCardinality", "member",
+        "imports", "versionInfo", "priorVersion", "deprecated", "backwardCompatibleWith",
+        "incompatibleWith", "Ontology", "Class", "ObjectProperty", "DatatypeProperty",
+        "NamedIndividual", "Restriction", "Thing", "Nothing", "AnnotationProperty",
+        "FunctionalProperty", "InverseFunctionalProperty", "TransitiveProperty",
+        "SymmetricProperty", "AsymmetricProperty", "ReflexiveProperty", "IrreflexiveProperty",
+    }
+
+    def _is_meta_predicate(self, p) -> bool:
+        """是否元谓词（rdf/rdfs/owl 结构词汇），按短名判断，与命名空间解耦。"""
+        if not isinstance(p, URIRef):
+            return True
+        return local(p) in self.META_PREDICATE_NAMES
+
+    def _graph_data(self, graph: Graph) -> dict:
+        """通用图谱导出：节点=类/个体（label 用 rdfs:label 或短名），边=业务对象属性。
+
+        与领域语义完全无关，任意 .owl 可用；供前端 Cytoscape 渲染。
+        """
+        nodes: dict[str, dict] = {}
+        edges: list[dict] = []
+
+        def ensure_node(iri: URIRef) -> str:
+            key = local(iri)
+            if key not in nodes:
+                kind = "class" if (iri, RDF.type, OWL.Class) in graph else "individual"
+                nodes[key] = {
+                    "id": key,
+                    "label": self.label(iri),
+                    "type": kind,
+                }
+            return key
+
+        edge_seen = set()
+        for s, p, o in graph:
+            if not isinstance(s, URIRef) or not isinstance(o, URIRef):
+                continue
+            if self._is_meta_predicate(p):
+                continue
+            src = ensure_node(s)
+            dst = ensure_node(o)
+            eid = f"{src}--{local(p)}--{dst}"
+            if eid in edge_seen:
+                continue
+            edge_seen.add(eid)
+            edges.append({
+                "id": eid,
+                "source": src,
+                "target": dst,
+                "label": local(p),
+                "provenance": "asserted" if graph is self.raw else "inferred",
+            })
+
+        return {"nodes": list(nodes.values()), "edges": edges}
+
+    def materialized(self) -> dict:
+        """物化 diff：原始断言图 + 推理新增图 + 统计。"""
+        inferred_graph = Graph()
+        for triple in set(self.g) - set(self.raw):
+            inferred_graph.add(triple)
+        return {
+            "stats": {
+                "triples_asserted": len(self.raw),
+                "triples_materialized": len(self.g),
+                "inferred_added": len(self.g) - len(self.raw),
+            },
+            "asserted": self._graph_data(self.raw),
+            "inferred": self._graph_data(inferred_graph),
+        }
+
+    def source_xml(self) -> str:
+        """返回当前本体的原始 RDF/XML 文本。"""
+        with open(self.onto_path, encoding="utf-8") as f:
+            return f.read()
+
+    def export_graph(self, fmt: str = "turtle") -> str:
+        """导出推理后完整本体（含物化三元组）。支持 turtle / rdfxml / n3。"""
+        fmt_map = {"turtle": "turtle", "rdfxml": "xml", "n3": "n3"}
+        if fmt not in fmt_map:
+            raise ValueError(f"不支持的导出格式: {fmt}（可选 turtle / rdfxml / n3）")
+        data = self.g.serialize(format=fmt_map[fmt])
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        return data
 
 
 _engine = None

@@ -34,3 +34,10 @@ htmlcov/
 
 # ---------- 文档构建 ----------
 site/
+
+# ---------- 前端（frontend/app） ----------
+frontend/app/node_modules/
+frontend/app/dist/
+
+# ---------- 运行时上传的本体 ----------
+data/uploads/
