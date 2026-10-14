@@ -1,4 +1,7 @@
 # 06 用 MCP 把本体服务接入智能体
+> 本文是《本体上手指南》系列第 7 篇（共 9 篇），零基础入门「本体 × 智能体」。
+> 完整系列文章与全部源码都在 GitHub：**https://github.com/jasony62/ontology-agent-demo**（欢迎 Star / Fork / Issue）
+> 在线免费阅读（GitHub Pages）：https://jasony62.github.io/ontology-agent-demo/
 
 > 阅读时长：约 12 分钟 · 配套动手：约 8 分钟
 > **读完你能**：把本体推理服务接进豆包，让它在对话里直接调用推理工具——"智能体 × 本体"正式合体
@@ -120,6 +123,20 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
   A：REST 是"人/程序按文档调用"；MCP 是"智能体自动发现并调用"——工具带机器可读的 schema 和描述，智能体自己决定何时调用哪个。对本项目而言，二者背后是同一个引擎。
 - **Q：只能接豆包吗？**
   A：不是。任何 MCP 客户端都能接：`--transport stdio` 可接本地客户端 / Claude Desktop；streamable-http 可接其他支持 MCP 的智能体平台。
+
+## 获取项目：GitHub 一键直达
+
+本系列全部 9 篇文章、项目源码与可运行示例：
+
+- **GitHub 仓库**：https://github.com/jasony62/ontology-agent-demo（Star / Fork / Issue 都欢迎）
+- **在线阅读**：https://jasony62.github.io/ontology-agent-demo/（GitHub Pages 自动构建，含全部配图）
+- **本地一键运行**：
+
+  ```bash
+  git clone https://github.com/jasony62/ontology-agent-demo.git
+  cd ontology-agent-demo
+  docker compose up -d api
+  ```
 
 ---
 **下一篇**：篇 7《智能体 × 本体协作实战》——总结分工模型与最佳实践，并教你判断"什么时候该用本体"。
