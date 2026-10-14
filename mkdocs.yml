@@ -1,6 +1,7 @@
 site_name: 本体上手指南
 site_description: 本体 × 智能体协作 —— 面向零基础读者的 9 篇入门系列（配套 ontology-agent-demo 仓库）
 site_author: yangyue
+site_url: https://jasony62.github.io/ontology-agent-demo/
 repo_url: https://github.com/jasony62/ontology-agent-demo
 edit_uri: blob/main/docs/guide/
 
@@ -22,20 +23,21 @@ theme:
         icon: material/brightness-4
         name: 切换到浅色模式
 
-docs_dir: docs
+# docs_dir 指向指南目录本身：README.md 直接成为站点根 index.html
+docs_dir: docs/guide
 
 nav:
-  - 指南首页: guide/README.md
+  - 指南首页: README.md
   - 概念认知:
-      - 00 为什么需要本体: guide/00-为什么需要本体.md
-      - 01 本体入门: guide/01-本体入门.md
-      - 02 解剖示例本体: guide/02-解剖示例本体.md
+      - 00 为什么需要本体: 00-为什么需要本体.md
+      - 01 本体入门: 01-本体入门.md
+      - 02 解剖示例本体: 02-解剖示例本体.md
   - 推理与图谱:
-      - 03 本体推理原理: guide/03-本体推理原理.md
-      - 04 本体与知识图谱: guide/04-本体与知识图谱.md
+      - 03 本体推理原理: 03-本体推理原理.md
+      - 04 本体与知识图谱: 04-本体与知识图谱.md
   - 服务搭建:
-      - 05 搭建本体推理服务: guide/05-搭建本体推理服务.md
-      - 06 MCP 接入智能体: guide/06-MCP接入智能体.md
+      - 05 搭建本体推理服务: 05-搭建本体推理服务.md
+      - 06 MCP 接入智能体: 06-MCP接入智能体.md
   - 应用与扩展:
-      - 07 智能体协作实战: guide/07-智能体协作实战.md
-      - 08 扩展新领域: guide/08-扩展新领域.md
+      - 07 智能体协作实战: 07-智能体协作实战.md
+      - 08 扩展新领域: 08-扩展新领域.md
