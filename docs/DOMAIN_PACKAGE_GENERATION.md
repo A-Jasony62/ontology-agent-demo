@@ -1,17 +1,22 @@
-# 从 owl + llm_wiki 自动生成领域包
+# 从 OWL + 业务知识库自动生成领域包
 
-> 本文是 `KNOWLEDGE_BEYOND_OWL.md` 的配套篇：已知 owl 无法单独承载业务知识
-> （那篇梳理了缺口），本篇回答"**如果已有 owl 定义 + 配套 llm_wiki 知识库，
-> 能否由智能体自动补齐这些额外知识？llm_wiki 怎么设计？**"。
+> 本文是 `KNOWLEDGE_BEYOND_OWL.md` 的配套篇：已知 OWL 无法单独承载业务知识
+> （那篇梳理了缺口），本篇回答"**如果已有 OWL 定义 + 配套业务知识库，
+> 能否由智能体自动补齐这些额外知识？知识库该怎么设计？**"。
 >
 > 核心结论：**可以，但采用分层自动化**——能脚本提取的不麻烦 LLM，
 > 能 LLM 生成的不靠人写，业务规则必须知识库先有，最终人工过目后生效。
+>
+> **知识管理方式**：本项目当前用 **llm_wiki**（本地 Markdown 知识库应用）
+> 管理这些业务知识；下文目录结构即 llm_wiki 的知识空间组织方式。
+> 换任何知识库系统（飞书文档 / Notion / Wiki）都适用同一套
+> "规则.md + 术语表.md + 场景.md"三件套结构。
 
 ---
 
 ## 1. 目标与核心思路
 
-**目标**：给定「owl 本体定义 + llm_wiki 业务知识库」，智能体自动产出可运行的领域包
+**目标**：给定「OWL 本体定义 + 业务知识库」，智能体自动产出可运行的领域包
 （`config.json` / `derivation.json` / `adapter.py` / `mcp.py`），
 把 DESIGN.md 中"手动搭领域包"的过程降为"维护知识库 + 过目待确认项"。
 
@@ -33,24 +38,25 @@
 
 | 额外知识 | 输入 | 生成方式 | 自动化 | 校验方式 |
 |---|---|---|---|---|
-| config.json 类/属性名 | owl | 脚本（owlready2 读类层次/属性） | ✅ 全自动 | 断言类数/属性数与 owl 一致 |
-| entities 短名⇄中文 | owl `rdfs:label` | 脚本提取 | ✅ 全自动 | 无空 label 校验 |
-| 顶层类 / 隐藏类 | owl + 业务说明 | 规则判断（top-level / equivalentClass 定义类）+ LLM 兜底 | ⚠️ 大部分 | 人工过目 |
-| derivation.json 叙述模板 | owl 公理 + 术语表 | LLM：公理→人话叙述 | ⚠️ 半自动 | 模板结构校验 + 推导链实测 |
+| config.json 类/属性名 | OWL | 脚本（owlready2 读类层次/属性） | ✅ 全自动 | 断言类数/属性数与 OWL 一致 |
+| entities 短名⇄中文 | OWL `rdfs:label` | 脚本提取 | ✅ 全自动 | 无空 label 校验 |
+| 顶层类 / 隐藏类 | OWL + 业务说明 | 规则判断（top-level / equivalentClass 定义类）+ LLM 兜底 | ⚠️ 大部分 | 人工过目 |
+| derivation.json 叙述模板 | OWL 公理 + 术语表 | LLM：公理→人话叙述 | ⚠️ 半自动 | 模板结构校验 + 推导链实测 |
 | mcp.py 工具契约 | 查询能力清单 + 场景.md | LLM：能力+场景 → 工具名/描述/参数 | ⚠️ 半自动 | MCP 注册冒烟 + 描述抽查 |
 | adapter.py 业务规则 | 规则.md（半结构化） | LLM：条件/动作 → 代码 | ⚠️ 依赖知识库 | pytest + 人工确认 |
 
-**关键边界**：R2 聚合、R4 禁止、风险阈值在 owl 里没有，LLM 也不能凭空生成——
+**关键边界**：R2 聚合、R4 禁止、风险阈值在 OWL 里没有，LLM 也不能凭空生成——
 **规则必须显式存在于知识库**，智能体只负责"翻译"成代码，不负责"发明"规则。
 
 ---
 
-## 3. llm_wiki 目录设计
+## 3. 业务知识库目录设计
 
-一个领域对应一个知识空间（与代码 `domains/<领域名>/` 同名，天然对应）：
+一个领域对应一个知识空间（与代码 `domains/<领域名>/` 同名，天然对应）。
+本项目中该知识空间即 llm_wiki 中的一个空间：
 
 ```
-domains/<领域名>/                        ← llm_wiki 中的领域知识空间
+domains/<领域名>/                        ← 领域知识空间（本项目中由 llm_wiki 管理）
 ├── ontology/
 │   └── <name>.owl                      # 本体定义（含版本号，生成指纹来源）
 ├── business/                           # ★ 智能体生成"额外知识"的事实源
@@ -95,12 +101,12 @@ domains/<领域名>/                        ← llm_wiki 中的领域知识空�
 | 字段 | 用途 |
 |---|---|
 | 触发 | 决定规则挂在哪个查询/动作上 |
-| 条件 | 翻译为 if 判断（引用 owl 属性名） |
+| 条件 | 翻译为 if 判断（引用 OWL 属性名） |
 | 动作 | 翻译为返回结构 / 图断言 |
 | 示例 | 生成测试用例 |
 | 依据 | 写入生成记录，可追溯 |
 
-### 4.2 术语表.md：与 owl 双向链接（实体识别与短名映射的桥）
+### 4.2 术语表.md：与 OWL 双向链接（实体识别与短名映射的桥）
 
 ```markdown
 ## 研发Agent（dev_agent）
@@ -113,7 +119,7 @@ domains/<领域名>/                        ← llm_wiki 中的领域知识空�
 - 别名：编码 / 开发能力
 ```
 
-设计要点：每个概念**标注对应 owl 元素（IRI + 类型）**，智能体生成 entities、
+设计要点：每个概念**标注对应 OWL 元素（IRI + 类型）**，智能体生成 entities、
 工具描述示例短名、derivation 模板时统一从这里取词，保证"短名⇄中文"全局一致。
 
 ### 4.3 场景.md：典型问法与期望结果（喂工具描述）
@@ -142,7 +148,7 @@ domains/<领域名>/                        ← llm_wiki 中的领域知识空�
 - 规则.md: 4 条规则（R2/R4/分类-合规/分类-高风险）
 - 术语表.md: 13 个体 / 25 类 / 12 属性
 产物：config.json / derivation.json / adapter.py / mcp.py
-校验：pytest 29/29 通过；MCP 14 工具注册冒烟通过
+校验：pytest 38/38 通过；MCP 14 工具注册冒烟通过
 待人工确认：
 - [ ] config.json 隐藏类（CertifiedAgent/ComplianceTask）
 - [ ] adapter.py R4 冲突消息措辞
@@ -159,7 +165,7 @@ domains/<领域名>/                        ← llm_wiki 中的领域知识空�
 ```mermaid
 flowchart LR
     OWL["owl 定义"] --> S1["① 脚本提取<br/>类/属性/label<br/>→ config 骨架 + entities"]
-    KW["llm_wiki business/<br/>规则.md + 术语表.md + 场景.md"] --> S2["② 智能体语义生成<br/>公理→derivation 模板<br/>规则→adapter 代码<br/>场景→mcp 工具定义"]
+    KW["业务知识库 business/<br/>规则.md + 术语表.md + 场景.md<br/>(本项目由 llm_wiki 管理)"] --> S2["② 智能体语义生成<br/>公理→derivation 模板<br/>规则→adapter 代码<br/>场景→mcp 工具定义"]
     S1 --> S2
     S2 --> S3["③ 组装领域包<br/>domains/<领域名>/"]
     S3 --> S4["④ 校验<br/>结构校验 + pytest 基线<br/>MCP 注册冒烟 + 问法实测"]
@@ -209,8 +215,7 @@ flowchart LR
 | `KNOWLEDGE_BEYOND_OWL.md` | 本篇的前提：为什么需要这些额外知识 |
 | `DESIGN.md` | 领域包结构约定（config/derivation/adapter/mcp 放哪、怎么命名）是生成器的输出规范 |
 | `REASONING.md` | 公理→人话叙述的知识基础（derivation 模板生成依据） |
-| ontology-reasoning skill | 可扩展"生成流程"：给定 owl + 知识库 → 产出领域包，替代手动装配 |
-| 现有测试基线 | pytest 29/29 是生成产物的验收闸门，生成后必须全绿才允许出包 |
+| 现有测试基线 | pytest 38/38 是生成产物的验收闸门，生成后必须全绿才允许出包 |
 
 ---
 
