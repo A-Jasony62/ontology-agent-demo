@@ -64,11 +64,23 @@ python3 -m venv .venv
 ### 运行测试与一键演示
 
 ```bash
-.venv/bin/python -m pytest tests/ -v      # 29 项测试
+.venv/bin/python -m pytest tests/ -v      # 38 项测试
 make demo                                  # 按顺序跑一遍核心接口（需服务已启动）
 ```
 
 > `make` 命令清单：`make setup` / `make run` / `make mcp` / `make test` / `make demo` / `make build-ontology` / `make docs`。
+
+### 命令行工具（CLI）
+
+`scripts/query.py` 提供与 API 对应的命令行查询，自动双通道：先试 HTTP（服务已启动时），连接失败则回退内嵌引擎（不依赖服务）：
+
+```bash
+.venv/bin/python scripts/query.py capability_match --task t_login_dev --local
+.venv/bin/python scripts/query.py classes --local
+.venv/bin/python scripts/query.py query-sparql --sparql "SELECT ?i ?t WHERE { ?i <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?t }" --local
+```
+
+完整命令清单见脚本帮助：`.venv/bin/python scripts/query.py -h`，用法教程见指南篇 5。
 
 ## 前端应用（本体图谱工作台）
 
