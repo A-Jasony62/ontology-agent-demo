@@ -13,11 +13,11 @@
 
 具体到本项目：推理服务把自己封成一个 **MCP Server**，向智能体（豆包）暴露一份**工具清单**——每个工具带名称、参数说明、返回值结构。智能体在对话中"看到"这些工具，就知道"哦，我可以调用 capability_match 来回答谁能做任务"。
 
-## 第 1 步：启动 MCP Server
+## 第 1 步：启动 MCP Server（Docker）
 
 ```bash
 cd ontology-agent-demo
-.venv/bin/python mcp/mcp_server.py --domain agent_task --port 9000
+docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
 ```
 
 启动日志（实测）：
@@ -26,8 +26,10 @@ cd ontology-agent-demo
 [info] 本体推理 MCP Server（agent_task 领域）已启动（streamable-http）: http://127.0.0.1:9000/mcp
 ```
 
+> `docker compose up` 可同时起 API(:8000) 与 MCP(:9000)；单起 MCP 用 `docker compose up -d mcp`。compose 已配置容器内绑定 `0.0.0.0`，宿主机通过端口映射访问。
+
 - **默认传输** `streamable-http`：供豆包连接器使用，地址 `http://127.0.0.1:9000/mcp`；
-- **`--transport stdio`**：供本地 MCP 客户端（如 Claude Desktop）使用；
+- **`--transport stdio`**：供本地 MCP 客户端（如 Claude Desktop）使用——stdio 需要标准输入输出通道，适合直接在宿主机运行 `python mcp/mcp_server.py --transport stdio`（需宿主机装有依赖）；
 - **`--domain`** 指定领域，默认 `agent_task`，换领域换参数即可（篇 8）；
 - 端口默认 **9000**——特意避开推理 API 的 8000，两者可同时运行；
 - **内嵌引擎，零服务依赖**：MCP Server 自带引擎与本体，不需要先启动 REST API。
@@ -108,7 +110,7 @@ cd ontology-agent-demo
 ## 小结
 
 1. **MCP = 智能体的 USB 接口**：能力封装成标准工具，智能体自动发现、按说明调用。
-2. **一行命令启动**：`mcp/mcp_server.py --port 9000`，内嵌引擎零依赖；豆包侧边栏加连接器即可接入。
+2. **一行命令启动**：`docker compose up -d mcp`，内嵌引擎零依赖；豆包侧边栏加连接器即可接入。
 3. **14 个工具**：8 领域（匹配/编排/分配/分类/一致性/解释/图谱/实体）+ 6 通用（SPARQL 等）。
 4. **智能体听懂人话，本体算得准讲得清**——MCP 是两者的"合体通道"。
 

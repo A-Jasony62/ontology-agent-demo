@@ -1,8 +1,24 @@
+# ---------- 阶段 1：构建前端（Vite + React） ----------
+FROM node:20-slim AS frontend
+
+WORKDIR /frontend
+
+# 国内 npm 源加速（可覆盖）：
+#   docker build --build-arg NPM_REGISTRY=https://registry.npmjs.org ...
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
+COPY frontend/app/package.json frontend/app/package-lock.json ./
+RUN npm ci --registry="$NPM_REGISTRY"
+
+COPY frontend/app/ ./
+RUN npm run build
+
+# ---------- 阶段 2：Python 运行时 ----------
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# 使用国内 pip 源加速依赖安装（默认清华 TUNA，可覆盖）：
+# 国内 pip 源加速（可覆盖）：
 #   docker build --build-arg PIP_INDEX_URL=https://pypi.org/simple ...
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
@@ -10,8 +26,10 @@ ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i "$PIP_INDEX_URL"
 
-# 再拷代码
+# 再拷代码（dist/node_modules/data 均已被 .dockerignore 排除）
 COPY . .
+# 覆盖为阶段 1 构建出的新前端（dist 在 .gitignore 中，不依赖本地构建产物）
+COPY --from=frontend /frontend/dist ./frontend/app/dist
 
 EXPOSE 8000 9000
 

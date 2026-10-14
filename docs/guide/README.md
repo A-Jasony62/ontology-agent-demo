@@ -3,6 +3,7 @@
 面向**零本体基础**读者的本体应用入门系列（9 篇）。贯穿一个示例：**智能体任务编排本体**（`domains/agent_task/agent_task_ontology.owl`），三大场景：登录模块开发、新功能上线、合规报表分配。
 
 > 全程动手，命令在仓库根目录（`ontology-agent-demo/`）下可复现；配图源文件与 PNG 均在 `docs/guide/assets/`。
+> **零 OWL 基础友好**：篇 1/3/8 文末均附「本文用到的 OWL 语法」速查附录，正文在给出 .owl 片段时同步逐行讲解。
 > 在线阅读：[GitHub Pages 站点](https://jasony62.github.io/ontology-agent-demo/)（由本目录经 MkDocs 自动构建）。
 
 ## 学习路径
@@ -30,18 +31,21 @@
 | [07-智能体协作实战.md](07-智能体协作实战.md) | 智能体 × 本体实战 | 设计自己的协作应用，判断何时用本体 |
 | [08-扩展新领域.md](08-扩展新领域.md) | 扩展新领域 | 换本体、新建领域、加规则与查询 |
 
-## 快速环境准备
+## 快速环境准备（Docker）
+
+无需安装任何 Python 依赖——用 Docker 一条命令起服务：
 
 ```bash
 cd ontology-agent-demo
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt   # rdflib / owlrl / fastapi / uvicorn / mcp
+docker compose up -d     # 构建镜像并后台启动 API(:8000) + MCP(:9000)
 ```
 
-验证（29 项测试全绿）：
+首次构建会自动拉取基础镜像并安装依赖（Dockerfile 默认用清华 TUNA pip 源）；之后秒级启动。
+
+验证（29 项测试全绿，在容器内执行）：
 
 ```bash
-.venv/bin/python -m pytest tests/ -q
+docker compose exec api python -m pytest tests/ -q
 ```
 
 ## 章节 ↔ 仓库代码对照
@@ -50,13 +54,13 @@ python3 -m venv .venv
 
 | 篇目 | 对应的代码 / 文件 | 动手任务 |
 |---|---|---|
-| 00 为什么需要本体 | 全仓库 | 跑 `make demo` 看纯 LLM 猜测 vs 本体推导的差别 |
+| 00 为什么需要本体 | 全仓库 | `docker compose up -d api` 后跑 `bash scripts/demo.sh`（宿主机 curl 访问容器服务）看推导 |
 | 01 本体入门 | `domains/agent_task/agent_task_ontology.owl` | 用 Protege 打开 OWL 文件看类层次 |
 | 02 解剖示例本体 | 同上 + `reasoner/engine.py` | 在 Protege 里逐个查看类 / 个体 / 属性 |
-| 03 本体推理原理 | `reasoner/engine.py` + `tests/test_reasoning.py::test_r1_*` | 跑 `pytest tests/test_reasoning.py -k r1` 验证属性链 |
+| 03 本体推理原理 | `reasoner/engine.py` + `tests/test_reasoning.py::test_r1_*` | 跑 `docker compose exec api python -m pytest tests/test_reasoning.py -k r1` 验证属性链 |
 | 04 本体与知识图谱 | `frontend/index.html`（图谱渲染） | 访问 Demo 页面看图谱 |
-| 05 搭建本体推理服务 | `api/main.py` + `scripts/demo.sh` | `make run` 后用 `bash scripts/demo.sh` 跑一遍接口 |
-| 06 MCP 接入智能体 | `mcp/mcp_server.py` + `domains/agent_task/mcp.py` | `make mcp` 启动后在豆包中添加连接器 |
+| 05 搭建本体推理服务 | `api/main.py` + `scripts/demo.sh` | `docker compose up -d api` 后用 `bash scripts/demo.sh` 跑一遍接口 |
+| 06 MCP 接入智能体 | `mcp/mcp_server.py` + `domains/agent_task/mcp.py` | `docker compose up -d mcp` 启动后在豆包中添加连接器 |
 | 07 智能体协作实战 | `domains/agent_task/adapter.py`（R2/R4 规则） | 用 `/api/assign` 分配一次任务并看推导链 |
 | 08 扩展新领域 | `domains/` + `scripts/build_ontology.py` | 仿照 `domains/agent_task/` 新建一个领域包 |
 

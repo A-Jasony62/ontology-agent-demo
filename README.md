@@ -40,7 +40,8 @@ cd ontology-agent-demo
 docker compose up            # 同时起 API(:8000) 和 MCP(:9000)
 ```
 
-> Dockerfile 默认用国内 pip 源（清华 TUNA）加速依赖安装；如需官方源：`docker build --build-arg PIP_INDEX_URL=https://pypi.org/simple -t ontology-agent-demo .`
+> Dockerfile 为多阶段构建：Node 阶段自动编译前端，Python 阶段仅装运行时依赖；默认国内镜像源（npm: npmmirror / pip: 清华 TUNA）加速，均可覆盖：
+> `docker build --build-arg NPM_REGISTRY=https://registry.npmjs.org --build-arg PIP_INDEX_URL=https://pypi.org/simple -t ontology-agent-demo .`
 
 ### 方式三：手动
 
@@ -90,6 +91,8 @@ npm run build               # 产物 frontend/app/dist
 ```
 
 > 说明：导入自定义本体后点击「同步到推理引擎」进入通用模式——图谱 / 物化 / SPARQL 等通用能力可用，领域推理（R1–R4）仅默认本体可用（接口返回明确提示）。
+
+> **安全边界**：`/api/upload` 是单机演示功能，接收任意 `.owl` 写入 `data/uploads/`，无鉴权、无输入隔离——请勿把服务直接暴露到公网；如需公网部署，请自行加鉴权与上传校验。
 
 ## 架构
 
