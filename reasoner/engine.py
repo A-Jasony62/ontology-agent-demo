@@ -15,7 +15,7 @@
 
 import os
 
-from rdflib import Graph, Namespace, URIRef, Literal, RDF, RDFS, OWL
+from rdflib import Graph, Namespace, URIRef, Literal, BNode, RDF, RDFS, OWL
 import owlrl
 
 ONTO_PATH = os.path.abspath(
@@ -225,7 +225,14 @@ class OntologyEngine:
         """全部类：name/label/direct_parent（rdfs:subClassOf 直接父类短名）。"""
         out = []
         for cls in sorted(self.g.subjects(RDF.type, OWL.Class), key=str):
-            parent = self.g.value(cls, RDFS.subClassOf)
+            if isinstance(cls, BNode):  # 跳过 owlrl 物化混入的 Restriction 匿名空节点
+                continue
+            # 取第一个具名父类；owlrl 物化也会把匿名类表达式（BNode）注入 subClassOf
+            # 对象位置，value() 可能恰好命中 BNode，导致 parent 输出幽灵名
+            parent = next(
+                (o for o in self.g.objects(cls, RDFS.subClassOf) if not isinstance(o, BNode)),
+                None,
+            )
             out.append({
                 "name": local(cls),
                 "label": self.label(cls),
