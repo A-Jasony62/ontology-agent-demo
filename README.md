@@ -22,6 +22,19 @@
 | 5 | 「检查一下有没有冲突」      | 触发检查   | 一致性检查           |
 | 6 | 「介绍一下这个本体」       | 读取本体概览 | 结构导出            |
 
+## 功能特性一览
+
+| 能力 | 说明 | 快速入口 |
+| ---- | ---- | ---- |
+| **OWL 2 RL 推理引擎** | 加载 OWL 本体并物化推理；SPARQL / 类层次 / 个体 / 属性查询 | `scripts/query.py classes --local` |
+| **业务规则 R1–R4** | 能力匹配、任务聚合、依赖传递、合规冲突检测，输出可解释推导链 | `make demo` |
+| **REST API** | 13+ 端点：推理 / 解释 / 一致性 / 分类 / SPARQL / OWL 上传 | `http://127.0.0.1:8000/docs` |
+| **MCP Server** | 14 个工具，智能体（豆包等）一行配置接入 | `make mcp` |
+| **图谱工作台** | React 工作台：三视图图谱、OWL 源码编辑、导入导出、可视化编辑 | `npm run dev` |
+| **CLI 双通道** | HTTP 优先、失败回退内嵌引擎（`--local` 零依赖） | `python scripts/query.py -h` |
+| **Docker 一键起** | 多阶段构建，compose 起 API + MCP | `docker compose up` |
+| **学习指南** | 9 篇《本体上手指南》在线文档，章节↔代码对照 | [在线阅读](https://jasony62.github.io/ontology-agent-demo/) |
+
 ## 快速开始
 
 **要求**：Python 3.10+（推荐 3.10–3.12，实测 3.14 亦可）、Git。
