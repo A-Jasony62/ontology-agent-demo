@@ -15,7 +15,7 @@
 
 import os
 
-from rdflib import Graph, Namespace, URIRef, Literal, RDF, RDFS, OWL
+from rdflib import Graph, Namespace, URIRef, Literal, BNode, RDF, RDFS, OWL
 import owlrl
 
 ONTO_PATH = os.path.abspath(
@@ -225,6 +225,8 @@ class OntologyEngine:
         """全部类：name/label/direct_parent（rdfs:subClassOf 直接父类短名）。"""
         out = []
         for cls in sorted(self.g.subjects(RDF.type, OWL.Class), key=str):
+            if isinstance(cls, BNode):  # 跳过 owlrl 物化混入的 Restriction 匿名空节点
+                continue
             parent = self.g.value(cls, RDFS.subClassOf)
             out.append({
                 "name": local(cls),
