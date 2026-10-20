@@ -11,6 +11,9 @@
 
 ### Fixed
 
+- `engine.classes()` 不再输出 owlrl 物化混入的 BNode 匿名空节点（「幽灵类」），
+  类层次 / `/api/classes` / MCP `entities()` 结果更干净
+
 ## [0.1.0] - 2026-10-20
 
 首个公开发布版本：本体推理能力打包为开箱即用的工具（推理引擎 + REST API + MCP + 图谱工作台 + 学习指南）。
@@ -55,3 +58,5 @@
 
 [Unreleased]: https://github.com/jasony62/ontology-agent-demo/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/jasony62/ontology-agent-demo/releases/tag/v0.1.0
+
+> AI生成
