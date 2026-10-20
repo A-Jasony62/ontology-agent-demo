@@ -227,7 +227,12 @@ class OntologyEngine:
         for cls in sorted(self.g.subjects(RDF.type, OWL.Class), key=str):
             if isinstance(cls, BNode):  # 跳过 owlrl 物化混入的 Restriction 匿名空节点
                 continue
-            parent = self.g.value(cls, RDFS.subClassOf)
+            # 取第一个具名父类；owlrl 物化也会把匿名类表达式（BNode）注入 subClassOf
+            # 对象位置，value() 可能恰好命中 BNode，导致 parent 输出幽灵名
+            parent = next(
+                (o for o in self.g.objects(cls, RDFS.subClassOf) if not isinstance(o, BNode)),
+                None,
+            )
             out.append({
                 "name": local(cls),
                 "label": self.label(cls),

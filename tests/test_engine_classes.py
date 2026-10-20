@@ -11,7 +11,7 @@ BNode 混入类层次输出，污染 /api/classes、MCP entities() 与前端类�
 BNode 特征：rdflib 自动生成的 ID 形如 `N` + 32 位 hex（共 33 字符）。
 """
 
-from rdflib import BNode, OWL, RDF
+from rdflib import BNode, OWL, RDF, RDFS
 
 from reasoner.engine import ONTO_PATH, OntologyEngine
 
@@ -79,6 +79,41 @@ def test_minimal_equivalent_intersection_bnode_is_skipped(tmp_path):
     names = [c["name"] for c in engine.classes()]
     assert not any(_is_ghost_bnode(n) for n in names)
     assert {"Person", "Employee", "Company"} <= set(names)
+
+
+def test_named_class_parent_never_ghost_bnode(tmp_path):
+    """残留缺口：具名类 subclassOf 匿名类表达式时，parent 字段不得输出 BNode 幽灵。
+
+    修复前 classes() 的 parent 用 value() 任意取一个父类，可能恰好命中 owlrl 注入
+    的匿名 restriction（BNode），使 parent 显示幽灵名；取第一个具名父类后免疫。
+    """
+    parent_bnode_owl = """<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#">
+  <owl:Class rdf:about="http://ex.org/o#Company"/>
+  <owl:Class rdf:about="http://ex.org/o#Worker">
+    <rdfs:subClassOf>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="http://ex.org/o#worksFor"/>
+        <owl:someValuesFrom rdf:resource="http://ex.org/o#Company"/>
+      </owl:Restriction>
+    </rdfs:subClassOf>
+  </owl:Class>
+  <owl:ObjectProperty rdf:about="http://ex.org/o#worksFor"/>
+</rdf:RDF>
+"""
+    path = tmp_path / "mini_parent_bnode.owl"
+    path.write_text(parent_bnode_owl, encoding="utf-8")
+    engine = OntologyEngine(str(path))
+    # 场景真实性：图中确有具名类 → BNode 父类三元组
+    assert any(
+        isinstance(o, BNode) and not isinstance(s, BNode)
+        for s, _, o in engine.g.triples((None, RDFS.subClassOf, None))
+    ), "反例未触发：图中应存在具名类 → BNode 父类"
+    for cls in engine.classes():
+        if cls["parent"] is not None:
+            assert not _is_ghost_bnode(cls["parent"]), f"{cls['name']} 的 parent 是幽灵: {cls['parent']}"
 
 
 def test_infer_metadata_and_graph_export_stay_consistent():
