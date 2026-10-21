@@ -5,6 +5,26 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-21
+
+### Fixed
+
+- API 先于前端构建启动时工作台白屏（issue #4）：`/assets` 静态资源改为始终挂载，
+  新增 `LazyStaticFiles`（覆盖 Starlette lifespan 目录检查——`check_dir=False` 仅跳过
+  构造期检查，lifespan 仍会 `os.stat` 导致启动即崩）；前端构建完成后无需重启即可服务。
+  `index()` 在未构建时返回含构建命令的明确提示，不再静默回退旧单页
+
+### Changed
+
+- `_resolve_ns` 初始化优化（issue #2）：默认命名空间推导由三次全图遍历（subjects /
+  objects / predicates）改为单次 `for s, p, o in g` 遍历（seen 去重保持「每术语计 1 次」
+  原语义）；xml:base 读取改用 `iterparse` 取根元素即停，避免与 rdflib 重复全量解析
+
+### Tests
+
+- 新增适配器真实查询用例（自定义本体 + 自动推导 NS 下执行 R1 属性链
+  capability_match / consistency 查询）与 `/assets` 挂载延迟生效回归测试
+
 ## [0.2.0] - 2026-10-21
 
 ### Added
@@ -117,7 +137,8 @@
   `docs/KNOWLEDGE_BEYOND_OWL.md`、`docs/DOMAIN_PACKAGE_GENERATION.md`（领域包自动生成路线图）
 - **许可证**：MIT（根 LICENSE；前端另附上游 MIT 许可证）
 
-[Unreleased]: https://github.com/jasony62/ontology-agent-demo/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jasony62/ontology-agent-demo/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/jasony62/ontology-agent-demo/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jasony62/ontology-agent-demo/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jasony62/ontology-agent-demo/releases/tag/v0.1.0
 
