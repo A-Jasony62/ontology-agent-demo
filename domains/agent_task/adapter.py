@@ -16,8 +16,9 @@
 """
 
 import os
+from datetime import datetime
 
-from rdflib import URIRef, RDFS
+from rdflib import Graph, Literal, URIRef, RDF, RDFS
 
 from reasoner.engine import local
 from reasoner.semantic import SemanticConfig, load_domain_config, load_derivation_config
@@ -29,6 +30,7 @@ DESCRIPTION = "智能体任务编排：能力匹配 / 任务编排 / 分配合�
 # 领域数据（独立 JSON 文件，通用加载器来自 reasoner.semantic）
 _DIR = os.path.dirname(os.path.abspath(__file__))
 ONTO_FILE = os.path.join(_DIR, "agent_task_ontology.owl")  # 本体文件（领域包自声明）
+EXTENSIONS_DIR = os.path.join(_DIR, "extensions")          # 增量扩展目录（REQ-06，001 批次）
 _CFG = load_domain_config(os.path.join(_DIR, "config.json"))           # 语义配置（semantic）
 _DER = load_derivation_config(os.path.join(_DIR, "derivation.json"))   # 推导链配置（templates + derivations）
 DEFAULT_CONFIG = _CFG.config
@@ -60,10 +62,13 @@ class AgentTaskAdapter:
         self.label = engine.label               # 供 explain / 外部取中文名（owl rdfs:label）
         self.templates = dict(TEMPLATES)        # 推导链文案模板
         self.derivations = dict(DERIVATIONS)    # 推导链展开规则（reasoner.derivation 解释）
-        self.assignments = {}                   # task 短名 -> agent 短名（运行时状态）
+        self.assignments = {}                   # task 短名 -> agent 短名（兼容缓存；权威源为图断言）
         self.r2_asserted = set()                # {(agent_iri, task_iri)} R2 产生的 can_execute
         self.last_derivation = []               # 最近一次查询的推导链
         self.last_query_kind = None
+        self.change_count = 0                   # 未提交变更数（persist 成功后归零）
+        self.changelog = []                     # 变更记录（时间/操作/详情）
+        self.last_commit = None                 # 最近一次落盘路径
 
         g, cfg = engine.g, config
         # 快照断言（直接）边，用于图谱展示与编排（排除推理闭包，避免图过密）
@@ -159,6 +164,52 @@ class AgentTaskAdapter:
                 "rule": "R4",
             }
         return None
+
+    # ---------------- 变更记录与增量持久化（001 批次） ----------------
+
+    def _note_change(self, op: str, detail: dict, persisted: dict | None) -> None:
+        """记录变更（dirty 计数 + changelog）；persist 成功后 pending 计数归零。"""
+        self.change_count += 1
+        self.changelog.append({
+            "time": datetime.now().isoformat(timespec="seconds"),
+            "op": op,
+            "operator": "ontology-service",   # 真实操作者（智能体 ID 等）由 002 批次接入
+            "detail": detail,
+        })
+        if persisted:
+            self.change_count = 0
+            self.last_commit = persisted["path"]
+
+    def _write_increment(self, op: str, name: str, triples: list) -> dict:
+        """将断言级增量写为扩展 ttl 文件（原子：临时文件 + rename）。
+
+        序列化源 = 本次操作的断言参数（不依赖图 diff，天然排除推理物化噪音）；
+        文件名 = YYYYMMDD-HHMMSS-<op>-<name>.ttl（时间戳命名，按文件名排序即时间序）。
+        写入失败不影响内存状态（已生效变更回退为"未持久化"并抛错）。
+        """
+        exts = self.engine.extensions_dir
+        if not exts:
+            raise ValueError("persist=true 需要引擎启用 extensions/ 扩展目录（本体同目录建 extensions/）")
+        os.makedirs(exts, exist_ok=True)
+        g = Graph()
+        for s, p, o in triples:
+            subj = URIRef(s) if s.startswith("http") else self.NS[s]
+            pred = p if isinstance(p, URIRef) else self._p(p)
+            if isinstance(o, Literal):
+                obj = o
+            elif isinstance(o, (int, bool)):
+                obj = Literal(o)
+            elif isinstance(o, str) and o.startswith("http"):
+                obj = URIRef(o)
+            else:
+                obj = self.NS[o]
+            g.add((subj, pred, obj))
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = os.path.join(exts, f"{ts}-{op}-{name}.ttl")
+        tmp = path + ".tmp"
+        g.serialize(destination=tmp, format="turtle")
+        os.replace(tmp, path)                # 原子替换（无半文件）
+        return {"path": path, "triples": len(triples)}
 
     # ---------------- 查询服务 ----------------
 
@@ -259,11 +310,28 @@ class AgentTaskAdapter:
             "sub_derivations": derivations,
         }
 
-    def assign(self, task_iri, agent_iri, with_derivation: bool = True) -> dict:
-        """分配任务给 Agent，并执行 R4 合规冲突检测。"""
+    def assign(self, task_iri, agent_iri, with_derivation: bool = True, persist: bool = False) -> dict:
+        """分配任务给 Agent，并执行 R4 合规冲突检测。
+
+        001 批次（BLOCK-1 修复）：分配改为图断言（assigned_to），成为可持久化、
+        reload 可恢复的本体状态；self.assignments 保留为兼容缓存（既有读取/计数）。
+        persist=true 时将本次增量写盘（extensions/）。
+        """
         task = URIRef(task_iri) if not isinstance(task_iri, URIRef) else task_iri
         agent = URIRef(agent_iri) if not isinstance(agent_iri, URIRef) else agent_iri
-        self.assignments[local(task)] = local(agent)
+        task_name, agent_name = local(task), local(agent)
+        # 覆盖式重新分配：先移除该任务旧分配边，再写新边（保持 v0.1.0 dict 覆盖语义）
+        self.engine.remove_triples(task_name, self.c.resolve("assigned_to"), None)
+        self.engine.add_triple(task_name, self.c.resolve("assigned_to"), agent_name)  # 图断言（权威）
+        self.assignments[task_name] = agent_name                                      # 兼容缓存
+
+        persisted = None
+        if persist:
+            persisted = self._write_increment(
+                "assign", task_name,
+                [(task_name, self.c.resolve("assigned_to"), agent_name)],
+            )
+        self._note_change("assign", {"task": task_name, "agent": agent_name}, persisted)
 
         conflict = self._compliance_conflict(task, agent)
         self.last_query_kind = "assign"
@@ -280,13 +348,15 @@ class AgentTaskAdapter:
             "agent_label": self.label(agent),
             "assigned": True,
             "conflict": conflict,
+            "persisted": persisted,
             "derivation": self.last_derivation,
         }
 
     def consistency(self, with_derivation: bool = True) -> dict:
-        """全量一致性检查：遍历所有分配，输出冲突清单。"""
+        """全量一致性检查：遍历所有分配（图断言为权威，含 reload 恢复），输出冲突清单。"""
+        assignments = dict(self.engine.subject_objects(self.c.resolve("assigned_to")))
         conflicts = []
-        for task_name, agent_name in self.assignments.items():
+        for task_name, agent_name in assignments.items():
             c = self._compliance_conflict(self.NS[task_name], self.NS[agent_name])
             if c:
                 c["task"] = task_name
@@ -302,19 +372,22 @@ class AgentTaskAdapter:
         self.last_query_kind = "consistency"
         self.last_derivation = expand(
             self.derivations["consistency"],
-            {"assignments_count": len(self.assignments), "conflicts": conflicts},
+            {"assignments_count": len(assignments), "conflicts": conflicts},
             self.templates,
         ) if with_derivation else []
         return {
             "consistent": len(conflicts) == 0,
-            "assignment_count": len(self.assignments),
+            "assignment_count": len(assignments),
             "conflicts": conflicts,
             "notes": info,
             "derivation": self.last_derivation,
         }
 
-    def classify(self, name: str, capabilities: list, constraints: list, risk_level: int = 3) -> dict:
-        """新增任务个体并自动分类（引擎推理 + 分类规则）。"""
+    def classify(self, name: str, capabilities: list, constraints: list, risk_level: int = 3, persist: bool = False) -> dict:
+        """新增任务个体并自动分类（引擎推理 + 分类规则）。
+
+        001 批次：persist=true 时将本次增量断言写盘（extensions/），重启后可恢复。
+        """
         engine = self.engine
         base = name or f"new_task_{len(self.tasks()) + 1}"
         iri = self.NS[base]
@@ -335,6 +408,23 @@ class AgentTaskAdapter:
         # 重新推理（新增个体可能触发 R1 / 分类）
         engine.reparse()
         self._apply_r2()
+
+        persisted = None
+        if persist:
+            triples = [(local(iri), RDF.type, self.c.simple_task_class)]
+            if risk_level:
+                triples.append((local(iri), self.c.resolve("has_risk_level"), int(risk_level)))
+            for c in capabilities:
+                triples.append((local(iri), self.c.resolve("requires_capability"), c))
+            for c in constraints:
+                triples.append((local(iri), self.c.resolve("requires_constraint"), c))
+            persisted = self._write_increment("classify", local(iri), triples)
+        self._note_change("classify", {
+            "individual": local(iri),
+            "capabilities": capabilities,
+            "constraints": constraints,
+            "risk_level": risk_level,
+        }, persisted)
 
         inferred_types = []
         cons = self.constraints_of(iri)
@@ -364,6 +454,7 @@ class AgentTaskAdapter:
             "types": self.engine.types_of(local(iri)),
             "inferred_types": inferred_types,
             "can_execute_matches": matches,
+            "persisted": persisted,
             "derivation": self.last_derivation,
         }
 
@@ -421,7 +512,7 @@ class AgentTaskAdapter:
                 edges.append({"source": s, "target": o, "property": self.c.resolve("can_execute"),
                               "inferred": (self.NS[s], self.NS[o]) in self.r2_asserted or self.is_complex_task(self.NS[o]),
                               "rule": self._rule_for(self.NS[s], self.NS[o])})
-        for t, a in self.assignments.items():
+        for t, a in self.engine.subject_objects(self.c.resolve("assigned_to")):
             edges.append({"source": t, "target": a, "property": self.c.resolve("assigned_to"), "inferred": False})
 
         return {"classes": classes, "individuals": individuals, "edges": edges}

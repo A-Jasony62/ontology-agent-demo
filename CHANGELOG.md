@@ -7,7 +7,26 @@
 
 ### Added
 
+- **本体定义可维护（001 批次）**：
+  - `OntologyEngine` 支持 `extensions_dir` 多文件加载：核心 `.owl` + `extensions/`
+    增量块按文件名排序解析（turtle / rdf-xml），新增、回滚本体定义不再触碰核心文件；
+    未配置 `extensions_dir` 时自动按"核心文件同目录 `extensions/`"推导
+  - `OntologyEngine.reload()` 原子热重载：新图完成全部加载与推理后才整体替换
+    内存状态，失败时旧状态保持不变（为批次二热重载端点打基础）
+  - `AgentTaskAdapter.classify/assign` 支持 `persist=true` 增量持久化：断言级 RDF
+    写 `extensions/YYYYMMDD-HHMMSS-<op>-<name>.ttl`（临时文件 + 原子替换），
+    重启后可恢复；`change_count` / `changelog` 变更留痕就绪（供批次二 health dirty 使用）
+  - `scripts/build_ontology.py` 新增 `--clean`：显式声明仅重建核心定义，
+    `extensions/` 增量文件不触碰
+  - MCP 领域工具 `assign` / `classify` 新增 `persist` 参数（默认 false，行为与 v0.1.0 一致）
+
 ### Changed
+
+- `AgentTaskAdapter.assign` 由"仅内存 dict"改为**图断言 + 兼容缓存**：分配写入
+  `assigned_to` 边（覆盖式重新分配，保持 v0.1.0 语义），`consistency` / `graph_export`
+  以图断言为权威读取——分配成为可持久化、可 reload 恢复的本体状态
+- 多文件模式下默认命名空间推导不再依赖核心文件头 `xml:base`（改走 IRI 高频前缀分支）；
+  单文件模式行为不变
 
 ### Fixed
 

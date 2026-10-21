@@ -46,12 +46,13 @@ _RESERVED_NS = {
 }
 
 
-def _resolve_ns(onto_path: str, g: "Graph") -> str:
+def _resolve_ns(onto_path: str, g: "Graph", use_xml_base: bool = True) -> str:
     """从本体自动推导默认命名空间（engine 的短名查询依赖它）。
 
     优先级：
       1. RDF/XML 根元素的 xml:base（本体作者的显式声明，追加 '#'），
          仅当图中确有以该前缀开头的术语时采用（避免误导）；
+         仅单文件模式启用（多文件时文件头无全局意义）；
       2. 断言图中最高频的 IRI 前缀——'#' 分隔优先，无 '#' 时取最后一个
          '/' 分隔（排除 rdf/rdfs/owl/xsd 标准词汇）；频率并列取字典序最小者；
       3. DEFAULT_NS 兜底（保持旧行为）。
@@ -60,17 +61,18 @@ def _resolve_ns(onto_path: str, g: "Graph") -> str:
     """
     import xml.etree.ElementTree as ET
 
-    # 1) xml:base 显式声明
-    try:
-        root = ET.parse(onto_path).getroot()
-        base = root.attrib.get("{http://www.w3.org/XML/1998/namespace}base")
-        if base:
-            candidate = base if base.endswith("#") else base + "#"
-            for term in g.subjects():
-                if isinstance(term, URIRef) and str(term).startswith(candidate):
-                    return candidate
-    except Exception:
-        pass
+    # 1) xml:base 显式声明（仅单文件模式）
+    if use_xml_base:
+        try:
+            root = ET.parse(onto_path).getroot()
+            base = root.attrib.get("{http://www.w3.org/XML/1998/namespace}base")
+            if base:
+                candidate = base if base.endswith("#") else base + "#"
+                for term in g.subjects():
+                    if isinstance(term, URIRef) and str(term).startswith(candidate):
+                        return candidate
+        except Exception:
+            pass
 
     # 2) 图中最高频 IRI 前缀（排除标准词汇；并列取字典序最小，保证确定性）
     from collections import Counter
@@ -101,20 +103,62 @@ def _resolve_ns(onto_path: str, g: "Graph") -> str:
 class OntologyEngine:
     """通用本体引擎：加载 / 推理 / 查询 / 写图原语，与本体定义无关。"""
 
-    def __init__(self, onto_path: str = ONTO_PATH, ns: str | None = None):
+    def __init__(self, onto_path: str = ONTO_PATH, extensions_dir: str | None = None, ns: str | None = None):
         self.onto_path = onto_path
+        # 扩展增量目录：默认取核心文件同目录的 extensions/（存在才启用）
+        if extensions_dir is None:
+            default_ext = os.path.join(os.path.dirname(onto_path), "extensions")
+            self.extensions_dir = default_ext if os.path.isdir(default_ext) else None
+        else:
+            self.extensions_dir = extensions_dir
 
         # 原始断言快照（未推理）——供物化 diff（推理新增 = 推理后图 − 原始图）
         self.raw = Graph()
-        self.raw.parse(onto_path, format="xml")
+        self.g = Graph()
+        self._parse_sources(self.raw)
+        self._parse_sources(self.g)
 
         # 默认命名空间：显式 ns > 从本体自动推导（xml:base / IRI 频率） > DEFAULT_NS
-        self.NS = Namespace(ns) if ns else Namespace(_resolve_ns(onto_path, self.raw))
+        # 多文件（启用 extensions）时跳过 xml:base 文件头依赖，用 IRI 频率推导
+        self.NS = Namespace(ns) if ns else Namespace(
+            _resolve_ns(onto_path, self.raw, use_xml_base=self.extensions_dir is None)
+        )
 
-        self.g = Graph()
-        self.g.parse(onto_path, format="xml")
         # L1：OWL 2 RL 推理（属性链、传递闭包、子类/等价类分类）
         owlrl.DeductiveClosure(owlrl.OWLRL_Semantics).expand(self.g)
+
+    def _parse_sources(self, g: Graph) -> None:
+        """加载核心定义 + extensions/ 增量块（按文件名排序）到指定图。
+
+        扩展文件格式：*.ttl 按 turtle 解析，*.owl/*.rdf/*.xml 按 rdf/xml 解析；
+        文件名排序即加载顺序（时间戳命名天然有序）。
+        """
+        g.parse(self.onto_path, format="xml")
+        if self.extensions_dir:
+            for f in sorted(os.listdir(self.extensions_dir)):
+                if f.endswith((".ttl", ".owl", ".rdf", ".xml")):
+                    fmt = "ttl" if f.endswith(".ttl") else "xml"
+                    g.parse(os.path.join(self.extensions_dir, f), format=fmt)
+
+    def reload(self) -> dict:
+        """原子热重载：重新解析核心 + 全部扩展并推理；失败时保持旧状态不变。
+
+        实现：先在新图上完成全部加载与推理，全部成功后才整体替换
+        self.raw / self.g / self.NS（引用替换为原子操作，无中间态）。
+        """
+        new_raw = Graph()
+        new_g = Graph()
+        self._parse_sources(new_raw)
+        self._parse_sources(new_g)
+        owlrl.DeductiveClosure(owlrl.OWLRL_Semantics).expand(new_g)
+        new_ns = Namespace(_resolve_ns(self.onto_path, new_raw, use_xml_base=self.extensions_dir is None))
+        # 全部成功 → 原子切换
+        self.raw, self.g, self.NS = new_raw, new_g, new_ns
+        return {
+            "status": "ok",
+            "triples": len(self.g),
+            "individuals": len(set(self.g.subjects(RDF.type, OWL.NamedIndividual))),
+        }
 
     # ---------------- 通用原语（供领域适配器组合） ----------------
 
@@ -170,6 +214,19 @@ class OntologyEngine:
     def add_triple(self, subject: str, property_name: str, value: str) -> None:
         """断言对象属性三元组（subject/value 均为短名）。"""
         self.g.add((self.NS[subject], self.NS[property_name], self.NS[value]))
+
+    def remove_triples(self, subject: str, property_name: str, value: str | None = None) -> None:
+        """移除指定断言（subject/property 为短名）。
+
+        value 为短名时移除该 (s, p, o)；value=None 时移除该 (s, p, *) 全部宾语。
+        用于覆盖式重新分配等场景（先清旧边再写新边）。
+        """
+        s, p = self.NS[subject], self.NS[property_name]
+        if value is not None:
+            self.g.remove((s, p, self.NS[value]))
+        else:
+            for o in list(self.g.objects(s, p)):
+                self.g.remove((s, p, o))
 
     def add_literal(self, subject: str, property_name: str, value) -> None:
         """断言数据属性三元组（value 为字面量，如数字/字符串）。"""
@@ -371,9 +428,14 @@ class OntologyEngine:
 _engine = None
 
 
-def get_engine(onto_path: str = ONTO_PATH, ns: str | None = None) -> OntologyEngine:
-    """共享单例（API / MCP / CLI 复用同一份加载与推理结果）。"""
+def get_engine(onto_path: str = ONTO_PATH, extensions_dir: str | None = None, ns: str | None = None) -> OntologyEngine:
+    """共享单例（API / MCP / CLI 复用同一份加载与推理结果）。
+
+    缓存键 = (onto_path, extensions_dir)；extensions_dir 缺省由引擎按
+    "核心文件同目录 extensions/" 自动推导（api/main.py 等既有调用无需改动）。
+    """
     global _engine
-    if _engine is None or _engine.onto_path != onto_path:
-        _engine = OntologyEngine(onto_path, ns=ns)
+    key = (onto_path, extensions_dir)
+    if _engine is None or (_engine.onto_path, _engine.extensions_dir) != key:
+        _engine = OntologyEngine(onto_path, extensions_dir=extensions_dir, ns=ns)
     return _engine
