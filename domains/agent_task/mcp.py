@@ -11,6 +11,7 @@ adapter 的工厂"——SIGHUP 热重载后新 adapter 自动生效，无需重�
 from mcp.server.mcpserver import MCPServer
 
 from reasoner.engine import local
+from . import cq_tbox
 
 
 def register_tools(server: MCPServer, get_adapter) -> None:
@@ -74,3 +75,20 @@ def register_tools(server: MCPServer, get_adapter) -> None:
             "capabilities": sorted(by_parent.get(a.c.capability_class, [])),
             "constraints": sorted(by_parent.get(a.c.constraint_class, [])),
         }
+
+    @server.tool(description=(
+        "CQ 建模入口-指南（领域）：输入能力问题（CQ）清单，返回给宿主 LLM 的 TBox 生成指令"
+        "（prompt，含目标 Turtle 格式、命名空间、公理模式提示）、当前本体的 schema 对照"
+        "（schema_map）与自查清单（checklist）。宿主据此生成 Turtle 草稿，再用"
+        "validate_tbox_draft 校验。用于 LLM 自动建模 + 推理验证流水线。"))
+    def guide_tbox_draft(cqs: list[str]) -> dict:
+        a = get_adapter()
+        return cq_tbox.guide_tbox_draft(a.engine, cqs)
+
+    @server.tool(description=(
+        "CQ 建模入口（校验工位，领域）：校验宿主生成的 Turtle TBox 草稿，返回分级验证报告"
+        "（L1 语法 → L2 命名空间/结构 → L3 一致性 → L4 公理表达力 → L5 术语覆盖）与 verdict"
+        "（pass / fixable / reject）及修复建议。cqs（可选）提供原 CQ 时，L4 按关键词校验"
+        "期望公理（能力→属性链/依赖→传递/约束→disjoint）。只验 TBox，不替宿主编造 ABox 断言。"))
+    def validate_tbox_draft(ttl: str, cqs: list[str] | None = None) -> dict:
+        return cq_tbox.validate_tbox_draft(ttl, cqs)
