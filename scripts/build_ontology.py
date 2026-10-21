@@ -31,7 +31,7 @@ from owlready2 import (
 )
 
 import rdflib
-from rdflib.namespace import RDF, OWL
+from rdflib.namespace import RDF, OWL, RDFS
 
 ONTO_IRI = "http://demo.example.org/agent-task-ontology"
 OUT_PATH = os.path.abspath(
@@ -363,9 +363,139 @@ def self_check(path: str) -> None:
     print(f"  任务个体数:   {len(tasks_all)}（期望 8：6 简单 + 2 复合）")
     if len(agents_all) != 5 or len(tasks_all) != 8:
         ok = False
+
+    # 5) 003 批次 REQ-08 强化自检：短名唯一 / 引用完整 / 依赖无环 / 标签完整
+    ok2, reports = _extra_checks(g, ns)
+    for r in reports:
+        print(f"  {r}")
+    ok = ok and ok2
+
     if ok:
-        print("[OK] 本体结构自检通过：属性链 / 传递属性 / 逆属性 / 个体齐全")
+        print("[OK] 本体结构自检通过：属性链 / 传递属性 / 逆属性 / 个体齐全 / REQ-08 四项")
     return ok
+
+
+def _extra_checks(g: rdflib.Graph, ns: str) -> tuple[bool, list[str]]:
+    """003 批次 REQ-08：构建期拦截定义错误。
+
+    判据（文档 D-P3-3）：
+      1) 短名唯一性：类短名与个体短名不冲突
+      2) 引用完整性：requires_capability → 存在的能力类；assigned_to → 存在的智能体；
+         composed_of → 存在的任务
+      3) 依赖无环：depends_on 直接边拓扑排序通过，失败定位环路径
+      4) 标签完整性：全部个体有 rdfs:label（中文名）
+    任一项失败即构建不通过（main 退出码非 0）。
+    """
+    q = lambda name: rdflib.URIRef(f"{ns}{name}")
+    reports: list[str] = []
+    fail_n = 0
+
+    # 类集合（含子类声明两侧）；属性集合；个体集合（具名主体，排除类/属性/BNode）
+    classes = set(g.subjects(RDF.type, OWL.Class)) | set(g.subjects(RDF.type, RDFS.Class))
+    classes |= set(g.subjects(RDFS.subClassOf, None)) | set(g.objects(None, RDFS.subClassOf))
+    prop_iris = (set(g.subjects(RDF.type, OWL.ObjectProperty))
+                 | set(g.subjects(RDF.type, OWL.DatatypeProperty))
+                 | set(g.subjects(RDF.type, OWL.AnnotationProperty)))
+    individuals = {s for s in g.subjects(RDF.type, None)
+                   if isinstance(s, rdflib.URIRef) and s not in classes and s not in prop_iris
+                   and (s, RDF.type, OWL.Ontology) not in g}
+
+    def _subclasses_of(top: str) -> set:
+        top_iri = q(top)
+        return {c for c in classes if (c, RDFS.subClassOf, top_iri) in g} | {top_iri}
+
+    def _inst_of(top_iri: rdflib.URIRef, o: rdflib.URIRef) -> bool:
+        """o 的类型沿 subClassOf 链可达 top_iri。"""
+        seen, stack = set(), list(g.objects(o, RDF.type))
+        while stack:
+            t = stack.pop()
+            if t == top_iri:
+                return True
+            if t in seen:
+                continue
+            seen.add(t)
+            stack.extend(g.objects(t, RDFS.subClassOf))
+        return False
+
+    # 1) 短名唯一性：类短名 ∩ 个体短名
+    cls_short = {local(c) for c in classes}
+    ind_short = {local(i) for i in individuals}
+    clash = cls_short & ind_short
+    if clash:
+        fail_n += 1
+        reports.append(f"[FAIL] 短名冲突（类名与个体名重复）: {sorted(clash)}")
+    else:
+        reports.append("[OK] 短名唯一性：类与个体短名无冲突")
+
+    # 2) 引用完整性
+    cap_classes = _subclasses_of("Capability")
+    ref_ok = True
+    for s, o in g.subject_objects(q("requires_capability")):
+        if o not in cap_classes:
+            ref_ok = False
+            reports.append(f"[FAIL] requires_capability 悬空引用: {local(s)} → {local(o)}（非能力类）")
+    for s, o in g.subject_objects(q("assigned_to")):
+        if not _inst_of(q("Agent"), o):
+            ref_ok = False
+            reports.append(f"[FAIL] assigned_to 悬空引用: {local(s)} → {local(o)}（非智能体个体）")
+    for s, o in g.subject_objects(q("composed_of")):
+        if not _inst_of(q("Task"), o):
+            ref_ok = False
+            reports.append(f"[FAIL] composed_of 悬空引用: {local(s)} → {local(o)}（非任务个体）")
+    if ref_ok:
+        reports.append("[OK] 引用完整性：能力 / 智能体 / 任务引用全部存在")
+    else:
+        fail_n += 1
+
+    # 3) 依赖无环（depends_on 直接边，Kahn；剩余节点即环内成员，定位环路径）
+    edges = list(g.subject_objects(q("depends_on")))
+    nodes = sorted({str(s) for s, _ in edges} | {str(o) for _, o in edges})
+    indeg = {n: 0 for n in nodes}
+    adj = {n: [] for n in nodes}
+    for s, o in edges:
+        adj[str(s)].append(str(o))
+        indeg[str(o)] += 1
+    ready = [n for n in nodes if indeg[n] == 0]
+    while ready:
+        n = ready.pop(0)
+        for m in adj[n]:
+            indeg[m] -= 1
+            if indeg[m] == 0:
+                ready.append(m)
+    cyclic = [n for n in nodes if indeg[n] > 0]
+    if cyclic:
+        fail_n += 1
+        # 从任一环内节点沿出边回溯定位环路径
+        path = []
+        cur = cyclic[0]
+        visited = set()
+        while cur not in visited:
+            visited.add(cur)
+            path.append(cur)
+            nxt = [m for m in adj[cur] if m in cyclic]
+            cur = nxt[0] if nxt else cur
+        cycle_start = path.index(cur) if cur in path else 0
+        cycle_path = path[cycle_start:] + [cur]
+        short = [x.rsplit("#", 1)[-1] for x in cycle_path]
+        reports.append(f"[FAIL] depends_on 存在依赖环: {' → '.join(short)}")
+    else:
+        reports.append("[OK] 依赖无环：depends_on 拓扑排序通过")
+
+    # 4) 标签完整性
+    missing = sorted({str(i).rsplit("#", 1)[-1] for i in individuals
+                      if (i, RDFS.label, None) not in g})
+    if missing:
+        fail_n += 1
+        reports.append(f"[FAIL] 个体缺少 rdfs:label（中文名）: {missing[:10]}{'…' if len(missing) > 10 else ''}")
+    else:
+        reports.append(f"[OK] 标签完整性：{len(individuals)} 个个体均有 rdfs:label")
+
+    return fail_n == 0, reports
+
+
+def local(iri) -> str:
+    s = str(iri)
+    return s.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
 
 
 def main() -> int:

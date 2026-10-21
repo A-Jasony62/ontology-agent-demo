@@ -132,13 +132,25 @@ class OntologyEngine:
 
         扩展文件格式：*.ttl 按 turtle 解析，*.owl/*.rdf/*.xml 按 rdf/xml 解析；
         文件名排序即加载顺序（时间戳命名天然有序）。
+        文件名含 `-del-` 的为**删除增量**（003 批次 REQ-09）：先解析到临时图，
+        再从结果图移除其中三元组——实现"删除可持久化、reload 可恢复"。
         """
         g.parse(self.onto_path, format="xml")
         if self.extensions_dir:
+            del_blocks = []
             for f in sorted(os.listdir(self.extensions_dir)):
                 if f.endswith((".ttl", ".owl", ".rdf", ".xml")):
                     fmt = "ttl" if f.endswith(".ttl") else "xml"
-                    g.parse(os.path.join(self.extensions_dir, f), format=fmt)
+                    path = os.path.join(self.extensions_dir, f)
+                    if "-del-" in f:
+                        block = Graph()
+                        block.parse(path, format=fmt)
+                        del_blocks.append(block)
+                    else:
+                        g.parse(path, format=fmt)
+            for block in del_blocks:          # 删除增量：最后统一移除（不依赖文件顺序）
+                for s, p, o in block:
+                    g.remove((s, p, o))
 
     def reload(self) -> dict:
         """原子热重载：重新解析核心 + 全部扩展并推理；失败时保持旧状态不变。

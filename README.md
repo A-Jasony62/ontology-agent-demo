@@ -95,6 +95,27 @@ make demo                                  # 按顺序跑一遍核心接口（�
 
 完整命令清单见脚本帮助：`.venv/bin/python scripts/query.py -h`，用法教程见指南篇 5。
 
+### 运维 CLI（ontologyctl）与备份
+
+`scripts/ontologyctl.py` 聚合 REST API + git + MCP 探测，统一管理本体服务（003 批次 REQ-04/07）：
+
+```bash
+.venv/bin/python scripts/ontologyctl.py status     # 服务 + 本体状态 + MCP 进程/端口（含两端一致性）
+.venv/bin/python scripts/ontologyctl.py reload     # API reload + MCP kill -HUP
+.venv/bin/python scripts/ontologyctl.py diff       # 未提交变更预览（服务 changelog + git status）
+.venv/bin/python scripts/ontologyctl.py commit -m "新增合规任务"   # 本体变更入 git 并打 tag
+.venv/bin/python scripts/ontologyctl.py rollback   # 回滚最近本体 tag（可指定 tag）并 reload
+.venv/bin/python scripts/ontologyctl.py log        # git log + 服务 changelog + tags
+```
+
+环境变量：`DOUBAO_API_BASE`（API 地址，默认 `http://127.0.0.1:8000`）、`ONTOLOGY_GIT_ROOT`（git 仓库根，默认项目根）。
+
+文件级快照备份（不依赖 git）：
+
+```bash
+bash scripts/backup.sh        # 核心 .owl + extensions/ → backups/<时间戳>/（已被 .gitignore 忽略）
+```
+
 ## 前端应用（本体图谱工作台）
 
 `frontend/app/` 是基于 [Microsoft Ontology-Playground](https://github.com/microsoft/Ontology-Playground)（MIT）代码实现的功能完整前端：
@@ -153,6 +174,16 @@ npm run build               # 产物 frontend/app/dist
 | POST | `/api/classify`    | 新增任务个体并自动分类                                                  |
 | POST | `/api/explain`     | 最近一次推理的推导链                                                   |
 | POST | `/api/consistency` | 一致性 / 合规冲突检查                                                 |
+
+运维 / CRUD 接口（v0.2.0 起，003 批次 REQ-04/05/06/07）：
+
+| 方法   | 路径                 | 功能                                                           |
+| ---- | ------------------ | ------------------------------------------------------------ |
+| POST | `/api/ontology/reload` | 热重载本体（新引擎构造+推理全部成功才原子替换，失败返回 400 旧状态可用） |
+| GET  | `/api/ontology/status` | 本体状态（baseline_file_hash / dirty / pending_changes / changelog / last_commit / counts） |
+| DELETE | `/api/ontology/individual/{name}` | 删除个体 `?persist&cascade`（被引用时保护，cascade 连带清理反向引用） |
+| POST | `/api/ontology/revoke` | 撤销任务分配 `{task, agent, persist}` |
+| POST | `/api/ontology/import` | 批量导入任务个体（事务：任一校验失败整体拒绝）`{individuals, persist}` |
 
 通用查询接口（v1.1.0 起，**与本体定义无关**，任意 `.owl` 加载后均可使用）：
 
