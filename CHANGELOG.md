@@ -7,6 +7,20 @@
 
 ### Added
 
+- **服务可管理（002 批次）**：
+  - `POST /api/ontology/reload` 热重载端点：构造新引擎（核心 + extensions/）全部成功
+    才原子替换，失败返回 400 且旧状态继续可用（REQ-01.1）
+  - `GET /api/ontology/status` 本体状态端点：基线文件哈希（sha256）/dirty/
+    pending_changes/changelog/last_commit/assignments/loaded_at（REQ-02 两端一致性判据）
+  - `/api/health` 扩展：version（本体 versionInfo，缺省回退文件 mtime）/loaded_at/
+    dirty/pending_changes/changelog（最近 5 条）/counts；顶层 agents/tasks 兼容字段保留
+  - API `reason/classify` 透传 `persist` 参数（正式变更走 API 的写入者约定落地）
+  - MCP 新增只读 `status` 工具（dirty/变更留痕/assignments）；领域工具闭包工厂化
+    （热重载后工具作用于新实例，修复闭包绑定旧 adapter 的 MUST-1）
+  - MCP 热重载双通道：`loop.add_signal_handler(SIGHUP)`（kill -HUP <pid>）+
+    `--watch` 文件监听（本体文件变化自动重载，环境无关）
+  - `tests/test_reload.py` 7 项：reload 新扩展生效 / 损坏回退 400 / health 与
+    status 字段 / dirty 增量 / MCP 工厂切换 / mcp_server 导入冒烟
 - **本体定义可维护（001 批次）**：
   - `OntologyEngine` 支持 `extensions_dir` 多文件加载：核心 `.owl` + `extensions/`
     增量块按文件名排序解析（turtle / rdf-xml），新增、回滚本体定义不再触碰核心文件；
@@ -22,6 +36,9 @@
 
 ### Changed
 
+- MCP Server `build_server` 签名改为工厂注入 `build_server(get_engine, get_adapter, domain_name, description)`，
+  版本 1.2.0 → 1.3.0；不再直接 `server.run()`，改自行 `asyncio.run` + `add_signal_handler`
+  （PEP 475 使同步阻塞场景下 signal.signal handler 不执行，实测证实）
 - `AgentTaskAdapter.assign` 由"仅内存 dict"改为**图断言 + 兼容缓存**：分配写入
   `assigned_to` 边（覆盖式重新分配，保持 v0.1.0 语义），`consistency` / `graph_export`
   以图断言为权威读取——分配成为可持久化、可 reload 恢复的本体状态
