@@ -10,6 +10,7 @@
 - 新增 CQ 驱动 TBox 建模入口（`domains/agent_task` 领域包扩展，白名单纪律内、零 LLM 依赖）：
   - `guide_tbox_draft`：能力问题（CQ）→ 宿主 LLM 生成指令（prompt）+ 现有 schema 对照 + 自查清单
   - `validate_tbox_draft`：服务端校验工位（L1 语法 → L2 命名空间/结构 → L3 一致性 → L4 公理表达力 → L5 术语覆盖），返回 verdict（pass/fixable/reject）与修复建议，供 LLM 建模迭代
+- 新增 MCP 通用工具 `explain_proof` 与引擎模块 `reasoner/proof.py`：给定一个结论三元组，返回机器可读的结构化证明 JSON `{mode, rule, axioms, premises, conclusion}`——支持属性链（R1）/传递闭包（R3）/subClassOf 类型判定（R4）三类推理规则；`mode` 区分 `asserted`（直接断言）/ `derived`（推理产生，含公理依据与前提事实链）/ `unproven`（图中不存在），诚实降级不伪造证明。用于评测证据锚、可溯源审计与程序化问答（与中文叙事 `explain()` 互补）
 
 ## [0.2.1] - 2026-10-21
 
