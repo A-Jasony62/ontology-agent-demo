@@ -21,13 +21,13 @@ def register_tools(server: MCPServer, adapter) -> None:
     def orchestrate(task: str) -> dict:
         return adapter.orchestrate(adapter.NS[task])
 
-    @server.tool(description="任务分配 + R4 合规冲突检测：将任务分配给智能体，若任务要求合规认证而智能体未认证则返回冲突报告。task/agent 为本体个体短名，agent 如 dev_agent、junior_dev。")
-    def assign(task: str, agent: str) -> dict:
-        return adapter.assign(adapter.NS[task], adapter.NS[agent])
+    @server.tool(description="任务分配 + R4 合规冲突检测：将任务分配给智能体，若任务要求合规认证而智能体未认证则返回冲突报告。task/agent 为本体个体短名，agent 如 dev_agent、junior_dev。persist=true 时将分配写入扩展增量文件（重启不丢，默认 false）。")
+    def assign(task: str, agent: str, persist: bool = False) -> dict:
+        return adapter.assign(adapter.NS[task], adapter.NS[agent], persist=persist)
 
-    @server.tool(description="新增任务个体并自动分类：按所需能力与约束创建任务，重新推理后返回推理出的类型（合规任务/高风险任务）与可执行智能体。capabilities 如 ['Coding']，constraints 如 ['ComplianceRequirement']。")
-    def classify(name: str, capabilities: list[str], constraints: list[str], risk_level: int = 3) -> dict:
-        return adapter.classify(name, capabilities, constraints, risk_level)
+    @server.tool(description="新增任务个体并自动分类：按所需能力与约束创建任务，重新推理后返回推理出的类型（合规任务/高风险任务）与可执行智能体。capabilities 如 ['Coding']，constraints 如 ['ComplianceRequirement']。persist=true 时将增量写盘（重启不丢，默认 false）。")
+    def classify(name: str, capabilities: list[str], constraints: list[str], risk_level: int = 3, persist: bool = False) -> dict:
+        return adapter.classify(name, capabilities, constraints, risk_level, persist=persist)
 
     @server.tool(description="全量一致性 / 合规冲突检查：遍历当前所有分配记录，返回冲突清单与高风险无人可执行提示。")
     def consistency() -> dict:

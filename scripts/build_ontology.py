@@ -2,7 +2,11 @@
 """构建「智能体任务编排」演示本体（OWL 2 DL），导出 .owl 文件并做 HermiT 推理自检。
 
 用法:
-    .venv/bin/python scripts/build_ontology.py
+    .venv/bin/python scripts/build_ontology.py [--clean]
+
+--clean: 仅重建核心定义（agent_task_ontology.owl），显式不触碰 extensions/ 增量文件；
+         不带 --clean 时行为相同（构建脚本本就只写核心 .owl），该选项用于 CI /
+         运维脚本的显式语义声明（001 批次，REQ-06 分层文件）。
 
 输出:
     domains/agent_task/agent_task_ontology.owl   （领域包自包含，可在 Protege 中打开）
@@ -13,6 +17,7 @@
     R2 复合任务委派 / R4 合规冲突 由 domains/agent_task/ 领域适配器中的规则执行
 """
 
+import argparse
 import os
 import sys
 
@@ -363,7 +368,18 @@ def self_check(path: str) -> None:
     return ok
 
 
-if __name__ == "__main__":
+def main() -> int:
+    ap = argparse.ArgumentParser(description="构建「智能体任务编排」演示本体（仅重建核心定义，不触碰 extensions/）")
+    ap.add_argument("--clean", action="store_true",
+                    help="仅重建核心定义（agent_task_ontology.owl），extensions/ 增量文件不动")
+    args = ap.parse_args()
+    if args.clean:
+        print("[info] --clean：仅重建核心定义，extensions/ 增量文件未触碰")
     ontology = build()
     if not self_check(OUT_PATH):
-        sys.exit(1)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

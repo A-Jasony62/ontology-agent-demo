@@ -243,9 +243,10 @@ ontology-agent-demo/
 ├── domains/                           # 领域适配器（独立目录，运行时动态加载）
 │   ├── __init__.py                    # list_domains / load_domain 注册表
 │   └── agent_task/                    # 「智能体任务编排」领域（自包含）
-│       ├── agent_task_ontology.owl    # 本体定义（Protege 可打开）
-│       ├── __init__.py                # 纯导出（NAME/DESCRIPTION/ONTO_FILE/适配器符号）
-│       ├── adapter.py                 # 领域适配器（R2/R4 规则 + 5 个查询方法 + 图谱导出）
+│       ├── agent_task_ontology.owl    # 本体定义（Protege 可打开，核心定义）
+│       ├── extensions/                # 增量扩展目录（REQ-06：classify/assign 持久化块，按文件名排序加载）
+│       ├── __init__.py                # 纯导出（NAME/DESCRIPTION/ONTO_FILE/EXTENSIONS_DIR/适配器符号）
+│       ├── adapter.py                 # 领域适配器（R2/R4 规则 + 5 个查询方法 + 图谱导出 + 增量持久化）
 │       ├── config.json                # 领域语义配置（类角色映射/结构数据；中文名见 owl rdfs:label，属性名默认同本体短名）
 │       ├── derivation.json            # 领域推导链配置（文案模板 templates + 展开规则 derivations）
 │       └── mcp.py                     # 领域 MCP 工具注册（8 个领域工具，register_tools）
@@ -261,7 +262,7 @@ ontology-agent-demo/
 ├── docs/
 │   └── guide/                         # 《本体上手指南》9 篇（MkDocs 构建在线站点）
 ├── assets/demo.png                    # README 演示截图
-├── tests/                             # 推理 + API 自动化测试（29 项）
+├── tests/                             # 推理 + API + 增量持久化自动化测试（pytest）
 ├── .github/workflows/                 # CI（pytest × 3.10-3.12）+ GitHub Pages
 ├── Makefile / docker-compose.yml / Dockerfile / pyproject.toml
 └── README.md
