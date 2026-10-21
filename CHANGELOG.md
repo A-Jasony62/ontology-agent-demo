@@ -7,6 +7,29 @@
 
 ### Added
 
+- **运维闭环（003 批次）**：
+  - CRUD 能力：`AgentTaskAdapter.delete_individual`（引用保护 / cascade 连带清理 /
+    persist 写 `-del-` 删除增量，reload 可恢复；删除同时清理全部入边——含推理入边
+    required_by/can_execute，否则 reparse 会借推理边重新生成已删断言，实测修复）、
+    `revoke`（撤销分配，不存在分配报错）、`import_individuals`（事务：先全量校验
+    名称冲突/能力与约束类存在/risk 0-10，全部通过才应用并一次 reparse 一次落盘，
+    任一失败整体拒绝无半套数据）
+  - API 三端点：`DELETE /api/ontology/individual/{name}?persist&cascade`、
+    `POST /api/ontology/revoke`、`POST /api/ontology/import`（`_require_default_ontology`
+    保护，ValueError→400）
+  - `scripts/build_ontology.py` REQ-08 结构自检四项：短名唯一 / 引用完整 /
+    依赖无环（Kahn + 环路径定位）/ 标签完整（排除类/属性/本体 IRI 误报）；
+    任一项失败构建退出码非 0 并输出逐项报告（真实本体全绿 + 负例注入验证）
+  - `scripts/ontologyctl.py` 运维 CLI（REQ-04/07）：`status`（服务+本体+MCP
+    探测+两端一致性）/ `reload`（API reload + MCP kill -HUP）/ `commit -m`
+    （本体变更 git add + commit + 打 `v0.1.x-本体-YYYYMMDD-HHMMSS` tag）/
+    `diff` / `rollback [tag]`（checkout 本体文件 + reload）/ `log`；
+    支持 `DOUBAO_API_BASE` / `ONTOLOGY_GIT_ROOT` 环境变量
+  - `scripts/backup.sh`：核心 `.owl` + `extensions/` 快照备份到 `backups/<时间戳>/`
+    （已被 .gitignore 忽略）
+  - `tests/test_crud.py` 12 项：delete 后查询同步 / 引用保护 / cascade 清理 /
+    delete+revoke+import 的 persist 与 reload 恢复 / 事务原子 / 未知能力拒绝 /
+    engine `-del-` 扩展加载 / build 自检真实本体通过 + 负例注入失败定位
 - **服务可管理（002 批次）**：
   - `POST /api/ontology/reload` 热重载端点：构造新引擎（核心 + extensions/）全部成功
     才原子替换，失败返回 400 且旧状态继续可用（REQ-01.1）

@@ -40,7 +40,7 @@ import reasoner.engine as engine_mod
 from reasoner.engine import get_engine, OntologyEngine
 from domains import load_domain
 from .schemas import (
-    ReasonRequest, ClassifyRequest,
+    ReasonRequest, ClassifyRequest, RevokeRequest, ImportRequest,
     SparqlRequest, IndividualsRequest, TypesRequest, PropertyRequest,
 )
 
@@ -314,6 +314,45 @@ def ontology_status():
         "assignments": len(ADAPTER.assignments),
         "loaded_at": ENGINE_LOADED_AT,
     }
+
+
+# ---------------- CRUD（003 批次 REQ-09：删除 / 撤回 / 批量导入） ----------------
+
+@app.delete("/api/ontology/individual/{name}")
+def delete_individual(name: str, persist: bool = False, cascade: bool = False):
+    """删除个体（A-box 断言）。被引用时拒绝（除非 cascade=true）。
+
+    删除后重推理：capability_match / consistency 随图断言同步更新；
+    persist=true 写删除增量（-del- 文件），reload 可恢复删除状态。
+    """
+    _require_default_ontology()
+    try:
+        return ADAPTER.delete_individual(name, persist=persist, cascade=cascade)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/ontology/revoke")
+def revoke_assignment(req: RevokeRequest):
+    """撤回分配：移除 assigned_to 图边，consistency 不再含该分配。"""
+    _require_default_ontology()
+    try:
+        return ADAPTER.revoke(req.task, req.agent, persist=req.persist)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/ontology/import")
+def import_individuals(req: ImportRequest):
+    """批量导入任务个体（事务）：先全量校验（名称冲突/引用完整），
+    全部通过才应用，部分失败整体回滚——不产生半套数据。
+    """
+    _require_default_ontology()
+    try:
+        return ADAPTER.import_individuals(
+            [i.model_dump() for i in req.individuals], persist=req.persist)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # 新前端静态资源（frontend/app/dist/assets）——存在时挂载

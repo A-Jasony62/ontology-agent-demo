@@ -180,11 +180,12 @@ class AgentTaskAdapter:
             self.change_count = 0
             self.last_commit = persisted["path"]
 
-    def _write_increment(self, op: str, name: str, triples: list) -> dict:
+    def _write_increment(self, op: str, name: str, triples: list, is_del: bool = False) -> dict:
         """将断言级增量写为扩展 ttl 文件（原子：临时文件 + rename）。
 
         序列化源 = 本次操作的断言参数（不依赖图 diff，天然排除推理物化噪音）；
-        文件名 = YYYYMMDD-HHMMSS-<op>-<name>.ttl（时间戳命名，按文件名排序即时间序）。
+        文件名 = YYYYMMDD-HHMMSS-<op>-<name>.ttl（时间戳命名，按文件名排序即时间序）；
+        is_del=True 时文件名为 ...-del-...（003 批次 REQ-09：删除增量，reload 时移除其中三元组）。
         写入失败不影响内存状态（已生效变更回退为"未持久化"并抛错）。
         """
         exts = self.engine.extensions_dir
@@ -205,7 +206,8 @@ class AgentTaskAdapter:
                 obj = self.NS[o]
             g.add((subj, pred, obj))
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        path = os.path.join(exts, f"{ts}-{op}-{name}.ttl")
+        marker = "-del-" if is_del else "-"
+        path = os.path.join(exts, f"{ts}{marker}{op}-{name}.ttl")
         tmp = path + ".tmp"
         g.serialize(destination=tmp, format="turtle")
         os.replace(tmp, path)                # 原子替换（无半文件）
@@ -456,6 +458,131 @@ class AgentTaskAdapter:
             "can_execute_matches": matches,
             "persisted": persisted,
             "derivation": self.last_derivation,
+        }
+
+    # ---------------- CRUD（003 批次 REQ-09：删除 / 撤回 / 批量导入） ----------------
+
+    def delete_individual(self, name: str, persist: bool = False, cascade: bool = False) -> dict:
+        """删除个体（A-box 断言：类型/属性/数据）。
+
+        引用保护：被 composed_of / depends_on / assigned_to / requires_capability
+        引用时拒绝删除（除非 cascade=true 连带清理反向引用边）。
+        推理入边（required_by / can_execute 等）**始终**一并删除——否则 reparse 时
+        推理器会借这些边重新推出已删断言（实测证实）；持久化快照仅含 A-box 断言
+        （reload 后推理边随个体消失自然清理）。
+        删除后重推理，r2_asserted 中相关项清理；persist=true 写删除增量（-del- 文件）。
+        """
+        iri = self.NS[name]
+        if (iri, None, None) not in self.engine.g:
+            raise ValueError(f"个体不存在: {name}")
+
+        biz = [self._p("composed_of"), self._p("depends_on"),
+               self._p("assigned_to"), self._p("requires_capability")]
+        ref = [(local(s), local(p)) for s, p, o in self.engine.g if o == iri and p in biz]
+        if ref and not cascade:
+            raise ValueError(
+                f"「{name}」被 {len(ref)} 处引用不可删除（来源: {ref[:3]}；如需连带清理请用 cascade=true）")
+
+        # 快照（持久化用，仅 A-box 断言）：出边 + cascade 业务反边
+        del_triples: list = []
+        for s, p, o in list(self.engine.g.triples((iri, None, None))):
+            del_triples.append((local(s), p, local(o) if isinstance(o, URIRef) else o))
+        if cascade:
+            for s, p, o in list(self.engine.g.triples((None, None, iri))):
+                if p in biz:
+                    del_triples.append((local(s), p, local(o)))
+
+        # 内存删除：出边 + 全部入边（业务边与推理边，g 与 raw 同步；raw 无对应时 no-op）
+        for s, p, o in list(self.engine.g.triples((iri, None, None))):
+            self.engine.g.remove((s, p, o))
+            self.engine.raw.remove((s, p, o))
+        for s, p, o in list(self.engine.g.triples((None, None, iri))):
+            self.engine.g.remove((s, p, o))
+            self.engine.raw.remove((s, p, o))
+
+        self.assignments.pop(name, None)
+        self.r2_asserted = {(a, t) for (a, t) in self.r2_asserted if a != iri and t != iri}
+
+        self.engine.reparse()               # 推理边（can_execute 等）随个体消失自动清理
+        self._apply_r2()
+
+        persisted = None
+        if persist:
+            persisted = self._write_increment("del", name, del_triples, is_del=True)
+        self._note_change("delete", {"individual": name, "cascade": cascade}, persisted)
+        return {"individual": name, "deleted": True, "removed_triples": len(del_triples),
+                "cascade": cascade, "persisted": persisted}
+
+    def revoke(self, task: str, agent: str, persist: bool = False) -> dict:
+        """撤回分配：移除 assigned_to 图边（001 批次起权威源为图断言）并更新兼容缓存。"""
+        t, a = self.NS[task], self.NS[agent]
+        if (t, self._p("assigned_to"), a) not in self.engine.g:
+            raise ValueError(f"不存在分配: {task} → {agent}")
+        self.engine.remove_triples(task, self.c.resolve("assigned_to"), agent)
+        self.assignments.pop(task, None)
+
+        persisted = None
+        if persist:
+            persisted = self._write_increment("revoke", task,
+                                              [(task, self.c.resolve("assigned_to"), agent)],
+                                              is_del=True)
+        self._note_change("revoke", {"task": task, "agent": agent}, persisted)
+        return {"task": task, "agent": agent, "revoked": True, "persisted": persisted}
+
+    def import_individuals(self, individuals: list[dict], persist: bool = False) -> dict:
+        """批量导入任务个体（事务：先全量校验 → 全部通过才应用 → 一次推理 → 一次落盘）。
+
+        校验：name 必填且不冲突、能力/约束引用存在、risk_level 合法。
+        任一失败整体拒绝，不产生半套数据。
+        """
+        plan: list[tuple] = []                       # (iri, caps, cons, risk)
+        for item in individuals:
+            name = (item.get("name") or "").strip()
+            if not name:
+                raise ValueError("导入个体缺少 name（事务中止）")
+            iri = self.NS[name]
+            if (iri, None, None) in self.engine.g:
+                raise ValueError(f"个体已存在: {name}（事务中止）")
+            caps = item.get("capabilities") or []
+            cons = item.get("constraints") or []
+            risk = int(item.get("risk_level", 3))
+            if not (0 <= risk <= 10):
+                raise ValueError(f"risk_level 需在 0-10: {name}={risk}（事务中止）")
+            for c in caps:
+                if (self.NS[c], RDFS.subClassOf, self.NS[self.c.capability_class]) not in self.engine.g:
+                    raise ValueError(f"未知能力类: {c}（事务中止）")
+            for c in cons:
+                if (self.NS[c], RDFS.subClassOf, self.NS[self.c.constraint_class]) not in self.engine.g:
+                    raise ValueError(f"未知约束类: {c}（事务中止）")
+            plan.append((iri, caps, cons, risk))
+
+        # 全部校验通过 → 应用断言
+        all_triples: list = []
+        for iri, caps, cons, risk in plan:
+            self.engine.add_type(local(iri), self.c.simple_task_class)
+            all_triples.append((local(iri), RDF.type, self.c.simple_task_class))
+            if risk:
+                self.engine.add_literal(local(iri), self.c.resolve("has_risk_level"), risk)
+                all_triples.append((local(iri), self.c.resolve("has_risk_level"), int(risk)))
+            for c in caps:
+                self.engine.add_triple(local(iri), self.c.resolve("requires_capability"), c)
+                all_triples.append((local(iri), self.c.resolve("requires_capability"), c))
+            for c in cons:
+                self.engine.add_triple(local(iri), self.c.resolve("requires_constraint"), c)
+                all_triples.append((local(iri), self.c.resolve("requires_constraint"), c))
+
+        self.engine.reparse()               # 一次推理（事务整体）
+        self._apply_r2()
+
+        persisted = None
+        if persist:
+            persisted = self._write_increment("import", f"batch{len(plan)}", all_triples)
+        self._note_change("import", {"count": len(plan), "names": [local(i) for i, *_ in plan]},
+                          persisted)
+        return {
+            "imported": len(plan),
+            "individuals": [local(i) for i, *_ in plan],
+            "persisted": persisted,
         }
 
     def explain(self) -> dict:

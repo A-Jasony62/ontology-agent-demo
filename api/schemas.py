@@ -24,6 +24,32 @@ class ClassifyRequest(BaseModel):
     persist: bool = False      # 增量落盘（REQ-05，001 批次能力经 API 暴露）
 
 
+# ---------------- CRUD（003 批次 REQ-09） ----------------
+
+class RevokeRequest(BaseModel):
+    """撤回分配。"""
+
+    task: str
+    agent: str
+    persist: bool = False
+
+
+class ImportItem(BaseModel):
+    """批量导入的单个任务个体（与 ClassifyRequest 同构）。"""
+
+    name: str
+    capabilities: list[str] = []
+    constraints: list[str] = []
+    risk_level: int = 3
+
+
+class ImportRequest(BaseModel):
+    """批量导入（事务：先全量校验，全部通过才应用）。"""
+
+    individuals: list[ImportItem]
+    persist: bool = False
+
+
 # ---------------- 通用查询接口（L1：与本体定义无关） ----------------
 
 class SparqlRequest(BaseModel):
