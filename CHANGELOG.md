@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增 MCP 通用工具 `explain_proof` 与引擎模块 `reasoner/proof.py`：给定一个结论三元组，返回机器可读的结构化证明 JSON `{mode, rule, axioms, premises, conclusion}`——支持属性链（R1）/传递闭包（R3）/subClassOf 类型判定（R4）三类推理规则；`mode` 区分 `asserted`（直接断言）/ `derived`（推理产生，含公理依据与前提事实链）/ `unproven`（图中不存在），诚实降级不伪造证明。用于评测证据锚、可溯源审计与程序化问答（与中文叙事 `explain()` 互补）
+
 ## [0.2.1] - 2026-10-21
 
 ### Fixed
