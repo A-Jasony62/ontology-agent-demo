@@ -1,0 +1,29 @@
+{
+  "name": "agent_task",
+  "description": "「智能体任务编排」领域的 CQ 驱动 TBox 建模模板（guide 生成指令 + validate 校验参照）。",
+  "namespace_hint": "http://demo.example.org/agent-task-ontology#",
+  "format_instruction": "只输出合法 Turtle。类用 owl:Class，属性用 owl:ObjectProperty；可以省略 @prefix，但要用一致的完整 IRI 或统一前缀。只定义类与属性（TBox），严禁写入任何个体/实例断言（ABox）。",
+  "axiom_patterns": {
+    "capability": "如需表达『谁可执行什么任务』，用 owl:propertyChainAxiom 定义推导属性（如 has_capability ◦ required_by ⊑ can_execute）。",
+    "dependency": "如需表达『依赖可以传递』，把该属性声明为 owl:TransitiveProperty。",
+    "hierarchy": "用 rdfs:subClassOf 表达类层次关系。"
+  },
+  "checklist": [
+    "只含类/属性/公理，不含任何个体断言",
+    "至少声明 1 个 owl:Class 与 1 个 owl:ObjectProperty",
+    "术语命名空间一致（同一前缀）",
+    "CQ 若涉及能力匹配，应声明 propertyChainAxiom；涉及依赖传递，应声明 TransitiveProperty"
+  ],
+  "schema_terms": {
+    "classes": [
+      "Agent", "Task", "Capability", "Tool", "Constraint",
+      "SimpleTask", "ComplexTask", "CertifiedAgent", "ComplianceTask",
+      "DevAgent", "TestAgent", "DeployAgent", "RequirementAgent", "JuniorDevAgent",
+      "ComplianceRequirement", "HighRiskTask"
+    ],
+    "properties": [
+      "has_capability", "requires_capability", "can_execute", "depends_on",
+      "composed_of", "requires_constraint", "has_certified", "has_risk_level", "assigned_to"
+    ]
+  }
+}

@@ -35,7 +35,13 @@ def test_index_page():
     # GET / 优先返回新前端（frontend/app/dist，Vite 构建）；未构建时回退旧单页
     r = client.get("/")
     assert r.status_code == 200
-    assert ("本体图谱工作台" in r.text) or ("本体图谱展示" in r.text)
+    # 前端已构建（frontend/app/dist，Vite）→ 返回工作台页面；未构建 → 返回明确构建提示。
+    # CI 的 test job 不构建前端，故两种状态都合法（API 设计：未构建时回退明确提示）。
+    assert (
+        ("本体图谱工作台" in r.text)
+        or ("本体图谱展示" in r.text)
+        or ("工作台前端未构建" in r.text)
+    )
 
 
 # ---------- 推理端点 ----------
