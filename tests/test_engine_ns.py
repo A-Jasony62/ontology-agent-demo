@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from reasoner.engine import OntologyEngine, ONTO_PATH, DEFAULT_NS, _resolve_ns  # noqa: E402
+from reasoner.engine import OntologyEngine, ONTO_PATH, DEFAULT_NS, _resolve_ns, local  # noqa: E402
 
 
 # 带显式 xml:base 的迷你本体（复刻真实领域包的写法：
@@ -179,3 +179,73 @@ def test_domain_adapter_ns_binding_still_works(tmp_path):
     # 传入非本领域的引擎：适配器不得改绑其 NS（上游既定行为）
     adapter = create_adapter(engine, DEFAULT_CONFIG)
     assert str(engine.NS) == "http://demo.example.org/mini-domain#"
+
+
+# 与 agent_task 语义同构的自定义本体（无 xml:base，走 IRI 高频前缀推导；
+# 含 R1 推理所需公理：can_execute 属性链 + required_by 逆属性）
+MINI_OWL_AGENT_TASK = """<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xmlns="http://demo.example.org/auto-agent#">
+  <owl:Class rdf:about="http://demo.example.org/auto-agent#Task"/>
+  <owl:Class rdf:about="http://demo.example.org/auto-agent#SimpleTask">
+    <rdfs:subClassOf rdf:resource="http://demo.example.org/auto-agent#Task"/>
+  </owl:Class>
+  <owl:Class rdf:about="http://demo.example.org/auto-agent#Agent"/>
+  <owl:Class rdf:about="http://demo.example.org/auto-agent#DevAgent">
+    <rdfs:subClassOf rdf:resource="http://demo.example.org/auto-agent#Agent"/>
+  </owl:Class>
+  <owl:Class rdf:about="http://demo.example.org/auto-agent#Capability"/>
+  <owl:Class rdf:about="http://demo.example.org/auto-agent#Coding">
+    <rdfs:subClassOf rdf:resource="http://demo.example.org/auto-agent#Capability"/>
+  </owl:Class>
+  <owl:ObjectProperty rdf:about="http://demo.example.org/auto-agent#has_capability"/>
+  <owl:ObjectProperty rdf:about="http://demo.example.org/auto-agent#requires_capability"/>
+  <owl:ObjectProperty rdf:about="http://demo.example.org/auto-agent#required_by">
+    <owl:inverseOf rdf:resource="http://demo.example.org/auto-agent#requires_capability"/>
+  </owl:ObjectProperty>
+  <owl:ObjectProperty rdf:about="http://demo.example.org/auto-agent#can_execute">
+    <owl:propertyChainAxiom rdf:parseType="Collection">
+      <rdf:Description rdf:about="http://demo.example.org/auto-agent#has_capability"/>
+      <rdf:Description rdf:about="http://demo.example.org/auto-agent#required_by"/>
+    </owl:propertyChainAxiom>
+  </owl:ObjectProperty>
+  <owl:NamedIndividual rdf:about="http://demo.example.org/auto-agent#t_front">
+    <rdf:type rdf:resource="http://demo.example.org/auto-agent#SimpleTask"/>
+    <rdf:type rdf:resource="http://demo.example.org/auto-agent#Task"/>
+    <requires_capability rdf:resource="http://demo.example.org/auto-agent#Coding"/>
+  </owl:NamedIndividual>
+  <owl:NamedIndividual rdf:about="http://demo.example.org/auto-agent#dev_agent">
+    <rdf:type rdf:resource="http://demo.example.org/auto-agent#DevAgent"/>
+    <rdf:type rdf:resource="http://demo.example.org/auto-agent#Agent"/>
+    <has_capability rdf:resource="http://demo.example.org/auto-agent#Coding"/>
+  </owl:NamedIndividual>
+</rdf:RDF>
+"""
+
+
+def test_adapter_real_query_with_auto_ns(tmp_path):
+    """issue #2 第 2 项：适配器在自定义本体 + 自动推导 NS 下执行真实查询，
+    而非仅断言 NS 值未被改绑。
+
+    R1 链路在自定义 NS 下完整跑通：has_capability ◦ required_by ⊑ can_execute，
+    capability_match 返回匹配 agent；consistency 可运行且无冲突。
+    """
+    path = _write(tmp_path, MINI_OWL_AGENT_TASK, "mini_auto_adapter.owl")
+    engine = OntologyEngine(path)
+    assert str(engine.NS) == "http://demo.example.org/auto-agent#"
+
+    from domains.agent_task import create_adapter, DEFAULT_CONFIG
+    adapter = create_adapter(engine, DEFAULT_CONFIG)
+
+    # 真实查询 1：capability_match（依赖属性链推理，NS 绑定错误会全空/报错）
+    m = adapter.capability_match(engine.NS["t_front"], with_derivation=False)
+    agents = [x["agent"] for x in m["matches"]]
+    assert agents == ["dev_agent"], agents
+    assert m["matches"][0]["shared_capabilities"] == ["Coding"]
+
+    # 真实查询 2：consistency（适配器内部图查询与自动推导 NS 一致）
+    c = adapter.consistency(with_derivation=False)
+    assert c["conflicts"] == []
+    assert local(engine.NS["t_front"]) in [local(t) for t in adapter.tasks()]

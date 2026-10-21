@@ -62,10 +62,14 @@ def _resolve_ns(onto_path: str, g: "Graph", use_xml_base: bool = True) -> str:
     import xml.etree.ElementTree as ET
 
     # 1) xml:base 显式声明（仅单文件模式）
+    #    iterparse 只读到根元素即停止，避免与 rdflib 解析重复全量解析整份 XML
+    #    （rdflib 图内不保留 xml:base 信息，只能从文件头读取）。
     if use_xml_base:
         try:
-            root = ET.parse(onto_path).getroot()
-            base = root.attrib.get("{http://www.w3.org/XML/1998/namespace}base")
+            base = None
+            for _event, elem in ET.iterparse(onto_path, events=("start",)):
+                base = elem.attrib.get("{http://www.w3.org/XML/1998/namespace}base")
+                break                       # 根元素即含 xml:base，无需解析完整文件
             if base:
                 candidate = base if base.endswith("#") else base + "#"
                 for term in g.subjects():
@@ -75,23 +79,28 @@ def _resolve_ns(onto_path: str, g: "Graph", use_xml_base: bool = True) -> str:
             pass
 
     # 2) 图中最高频 IRI 前缀（排除标准词汇；并列取字典序最小，保证确定性）
+    #    单次 for s,p,o in g 遍历收集（seen 去重保持「每个术语计 1 次」的原语义，
+    #    避免对同一断言图中的高重复术语加权；字面量不含 IRI 前缀，直接跳过）。
     from collections import Counter
 
     counter: Counter[str] = Counter()
-    terms = set(g.subjects()) | {o for o in g.objects() if isinstance(o, URIRef)} | \
-            {p for p in g.predicates() if isinstance(p, URIRef)}
-    for term in terms:
-        text = str(term)
-        if "#" in text:
-            prefix = text.rsplit("#", 1)[0] + "#"
-        else:
-            # 无 '#' 的 IRI：取最后一个 '/' 前缀（协议+域名+路径，且短名非空）
-            head, _, tail = text.rpartition("/")
-            if not (head and tail and "//" in head):
+    seen: set = set()
+    for s, p, o in g:
+        for term in (s, p, o):
+            if isinstance(term, Literal) or term in seen:
                 continue
-            prefix = head + "/"
-        if prefix not in _RESERVED_NS:
-            counter[prefix] += 1
+            seen.add(term)
+            text = str(term)
+            if "#" in text:
+                prefix = text.rsplit("#", 1)[0] + "#"
+            else:
+                # 无 '#' 的 IRI：取最后一个 '/' 前缀（协议+域名+路径，且短名非空）
+                head, _, tail = text.rpartition("/")
+                if not (head and tail and "//" in head):
+                    continue
+                prefix = head + "/"
+            if prefix not in _RESERVED_NS:
+                counter[prefix] += 1
     if counter:
         # 最高频；频率并列时取字典序最小，避免 set 迭代顺序导致的不确定
         return min(counter, key=lambda p: (-counter[p], p))
