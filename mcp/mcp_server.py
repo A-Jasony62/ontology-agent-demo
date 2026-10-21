@@ -57,6 +57,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from reasoner.engine import OntologyEngine
+from reasoner.proof import build_proof
 from domains import load_domain
 from mcp.server.mcpserver import MCPServer
 
@@ -108,6 +109,15 @@ def _register_generic_tools(server: MCPServer, get_engine) -> None:
     @server.tool(description="重新推理（通用）：重新执行 OWL 2 RL 推理与 R2 规则，返回三元组数量统计与个体数。")
     def infer() -> dict:
         return get_engine().infer()
+
+    @server.tool(description=(
+        "结构化证明导出（通用）：给定一个结论三元组（主体/谓词/客体短名），返回机器可读的证明 JSON"
+        "——{mode, rule, axioms, premises, conclusion}。mode=asserted（本体直接断言）/ derived"
+        "（推理产生，含公理依据与前提事实链）/ unproven（图中不存在）。支持三类推理规则："
+        "property_chain（OWL 属性链）、transitive（传递闭包）、class_membership（subClassOf 类型判定）。"
+        "用于评测证据锚、可溯源审计与程序化问答。"))
+    def explain_proof(subject: str, predicate: str, object: str) -> dict:
+        return build_proof(get_engine(), subject, predicate, object)
 
 
 async def _async_main(main_async, on_sighup):
