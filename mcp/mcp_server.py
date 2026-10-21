@@ -13,12 +13,23 @@
         consistency       全量一致性 / 合规冲突检查
         explain           最近一次查询的推导链（中文）
         ontology          本体结构（类/个体/边）
+        status            本体状态（只读，REQ-02 一致性判据）
         entities          可用实体短名清单（辅助智能体正确选参）
     通用工具（引擎直接提供，与本体定义无关，任意 .owl 可用）：
         query_sparql / individuals / classes / types_of / property_values / infer
 
 领域包约定（domains/<name>/ 必须暴露）：
-    NAME / DESCRIPTION / ONTO_FILE / create_adapter(engine, config=None) / mcp.register_tools(server, adapter)
+    NAME / DESCRIPTION / ONTO_FILE / create_adapter(engine, config=None) / mcp.register_tools(server, get_adapter)
+
+热重载（002 批次，REQ-01.2，双通道）：
+    · kill -HUP <pid> → 重建引擎（核心 + extensions/）与适配器，工具调用即时生效；
+      失败时保持旧状态并记录日志。工具闭包绑定 get_* 工厂，不绑定实例。
+    · --watch 文件监听 → 本体文件变化自动重载（环境无关，部分运行环境信号机制被抑制时
+      的可靠通道；改文件即生效）。
+    信号实现说明（macOS/Python 实测）：signal.signal() 注册的 handler 在
+    asyncio/同步阻塞场景均不执行（PEP 475 自动重试系统调用），必须用
+    loop.add_signal_handler()（asyncio 程序捕获信号的唯一可靠方式）。
+    因此本模块不用 server.run()，而是自行 asyncio.run + add_signal_handler。
 
 传输：
     默认 streamable-http（豆包连接器：填 http://127.0.0.1:9000/mcp）；
@@ -27,13 +38,18 @@
 用法（在项目根执行）:
     .venv/bin/python mcp/mcp_server.py                                # 默认领域 agent_task，HTTP
     .venv/bin/python mcp/mcp_server.py --domain agent_task --port 9000
+    .venv/bin/python mcp/mcp_server.py --watch                       # 文件监听热重载（推荐）
     .venv/bin/python mcp/mcp_server.py --transport stdio              # stdio
 """
 
 import argparse
+import asyncio
 import importlib
 import os
+import signal
 import sys
+import threading
+import time
 
 # 项目根 = mcp/ 的父目录；加载 reasoner 包、domains 包与领域本体（领域包自包含）
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -45,49 +61,74 @@ from domains import load_domain
 from mcp.server.mcpserver import MCPServer
 
 
-def build_server(engine: OntologyEngine, adapter, domain_name: str, description: str) -> MCPServer:
-    """组装 MCP Server：领域工具（随领域包）+ 通用工具（引擎直接提供）。"""
+def build_server(get_engine, get_adapter, domain_name: str, description: str) -> MCPServer:
+    """组装 MCP Server：领域工具（随领域包）+ 通用工具（引擎直接提供）。
+
+    get_engine / get_adapter 为无参工厂（返回当前生效实例），闭包不绑定实例，
+    热重载后自动指向新引擎/适配器，无需重建 Server。
+    """
     server = MCPServer(
         name="ontology-reasoning",
-        title=f"本体推理服务（{adapter.NAME} 领域）",
+        title=f"本体推理服务（{get_adapter().NAME} 领域）",
         description=f"基于 OWL 2 本体的确定性推理：{description}；通用查询（SPARQL/个体/类/类型/属性/重推理）",
-        version="1.2.0",
+        version="1.3.0",
     )
 
     # 领域工具：动态加载领域包的 MCP 注册器（领域相关代码随领域包走）
     mod = importlib.import_module(f"domains.{domain_name}.mcp")
-    mod.register_tools(server, adapter)
+    mod.register_tools(server, get_adapter)
 
     # 通用工具（L1：与本体定义无关，任意 .owl 可用）
-    _register_generic_tools(server, engine)
+    _register_generic_tools(server, get_engine)
     return server
 
 
-def _register_generic_tools(server: MCPServer, engine: OntologyEngine) -> None:
+def _register_generic_tools(server: MCPServer, get_engine) -> None:
     @server.tool(description="SPARQL 查询（通用）：执行 SPARQL SELECT 并返回结果行，IRI 值自动转为短名。适用于任何本体，不依赖领域语义。")
     def query_sparql(sparql: str) -> dict:
-        return {"results": engine.query_sparql(sparql)}
+        return {"results": get_engine().query_sparql(sparql)}
 
     @server.tool(description="个体查询（通用）：返回指定类（短名，含其子类）的全部个体短名。如 individuals('Agent')。")
     def individuals(class_name: str) -> dict:
-        return {"class": class_name, "individuals": engine.individuals(class_name)}
+        return {"class": class_name, "individuals": get_engine().individuals(class_name)}
 
     @server.tool(description="类层次（通用）：返回本体全部类的 name/label/direct_parent。")
     def classes() -> dict:
-        return {"classes": engine.classes()}
+        return {"classes": get_engine().classes()}
 
     @server.tool(description="个体类型（通用）：返回指定个体推理后的全部类型短名（含子类推理结论）。如 types_of('dev_agent')。")
     def types_of(individual: str) -> dict:
-        return {"individual": individual, "types": engine.types_of(individual)}
+        return {"individual": individual, "types": get_engine().types_of(individual)}
 
     @server.tool(description="属性取值（通用）：返回主体-属性 的取值列表。如 property_values('dev_agent', 'has_capability')。")
     def property_values(subject: str, property_name: str) -> dict:
         return {"subject": subject, "property": property_name,
-                "values": engine.property_values(subject, property_name)}
+                "values": get_engine().property_values(subject, property_name)}
 
     @server.tool(description="重新推理（通用）：重新执行 OWL 2 RL 推理与 R2 规则，返回三元组数量统计与个体数。")
     def infer() -> dict:
-        return engine.infer()
+        return get_engine().infer()
+
+
+async def _async_main(main_async, on_sighup):
+    """在事件循环内注册 SIGHUP（asyncio 可靠信号路径）后运行 MCP 服务。"""
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGHUP, on_sighup)
+        print("[info] SIGHUP 热重载已注册（事件循环，kill -HUP <pid> 生效）",
+              file=sys.stderr, flush=True)
+    except (NotImplementedError, RuntimeError, ValueError):
+        print("[info] 当前平台不支持 SIGHUP（热重载可改走 HTTP API reload 或重启进程）",
+              file=sys.stderr, flush=True)
+    await main_async
+
+
+def _run_server(server, transport: str, on_sighup, **kwargs):
+    """替代 server.run()：自行 asyncio.run，先注入 SIGHUP 再进入服务主循环。"""
+    if transport == "stdio":
+        asyncio.run(_async_main(server.run_stdio_async(), on_sighup))
+    else:
+        asyncio.run(_async_main(server.run_streamable_http_async(**kwargs), on_sighup))
 
 
 def main() -> int:
@@ -99,21 +140,89 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9000,
                         help="streamable-http 端口（默认 9000，避免与推理 API 8000 冲突）")
+    parser.add_argument("--watch", action="store_true", default=False,
+                        help="文件监听热重载：本体文件（核心 owl + extensions/）变化自动重载，无需 kill -HUP")
+    parser.add_argument("--watch-interval", type=float, default=2.0,
+                        help="文件监听轮询间隔（秒，默认 2）")
     args = parser.parse_args()
 
     # 领域包自声明本体文件；按领域加载引擎与适配器
     domain_mod = importlib.import_module(f"domains.{args.domain}")
-    engine = OntologyEngine(onto_path=domain_mod.ONTO_FILE)
-    adapter = load_domain(args.domain, engine)
-    server = build_server(engine, adapter, args.domain, domain_mod.DESCRIPTION)
+
+    # 运行态（引擎 / 适配器随热重载替换）：工具闭包只依赖这两个工厂
+    state = {}
+
+    def _load(onto_path, extensions_dir=None) -> tuple:
+        engine = OntologyEngine(onto_path=onto_path, extensions_dir=extensions_dir)
+        return engine, load_domain(args.domain, engine)
+
+    def get_engine() -> OntologyEngine:
+        return state["engine"]
+
+    def get_adapter():
+        return state["adapter"]
+
+    state["engine"], state["adapter"] = _load(domain_mod.ONTO_FILE)
+
+    def _reload(trigger: str) -> bool:
+        """重建引擎 + 适配器（核心 + extensions/）；失败保持旧状态。SIGHUP / 文件监听共用。"""
+        try:
+            new_engine, new_adapter = _load(domain_mod.ONTO_FILE, state["engine"].extensions_dir)
+        except Exception as exc:
+            print(f"[{trigger}] 重载失败（保持旧状态）: {exc}", file=sys.stderr, flush=True)
+            return False
+        state["engine"], state["adapter"] = new_engine, new_adapter
+        print(f"[{trigger}] 本体已热重载：{len(new_engine.g)} 三元组，"
+              f"{len(set(new_engine.g.subjects()) | set(new_engine.g.objects()))} 节点",
+              file=sys.stderr, flush=True)
+        return True
+
+    def _on_sighup(signum, frame):
+        _reload("sighup")
+
+    try:
+        signal.signal(signal.SIGHUP, _on_sighup)
+    except (AttributeError, ValueError):
+        pass  # SIGHUP 不可用平台；事件循环内 add_signal_handler 会再次尝试并给出日志
+
+    # 文件监听热重载（REQ-01.2 双通道）：本体文件（核心 owl + extensions/）变化即重载。
+    # 环境无关（信号在部分运行环境被抑制），改文件即生效。
+    if args.watch:
+        def _fingerprint():
+            paths = [domain_mod.ONTO_FILE]
+            ext = state["engine"].extensions_dir
+            if ext and os.path.isdir(ext):
+                paths += sorted(
+                    os.path.join(ext, f) for f in os.listdir(ext)
+                    if f.endswith((".ttl", ".owl", ".rdf", ".xml")))
+            return [(p, os.path.getmtime(p), os.path.getsize(p)) for p in paths if os.path.exists(p)]
+
+        def _watch_loop():
+            seen = _fingerprint()
+            while True:
+                time.sleep(args.watch_interval)
+                try:
+                    cur = _fingerprint()
+                except OSError:
+                    continue
+                if cur != seen:
+                    seen = cur
+                    _reload("watch")
+
+        threading.Thread(target=_watch_loop, daemon=True).start()
+        print(f"[info] 文件监听热重载已启动（间隔 {args.watch_interval}s；核心本体 + extensions/）",
+              file=sys.stderr, flush=True)
+
+    server = build_server(get_engine, get_adapter, args.domain, domain_mod.DESCRIPTION)
 
     if args.transport == "stdio":
-        print(f"[info] 本体推理 MCP Server（{adapter.NAME} 领域）已启动（stdio）", file=sys.stderr)
-        server.run(transport="stdio")
+        print(f"[info] 本体推理 MCP Server（{state['adapter'].NAME} 领域）已启动（stdio）；kill -HUP / 文件监听热重载",
+              file=sys.stderr, flush=True)
+        _run_server(server, "stdio", _on_sighup)
     else:
-        print(f"[info] 本体推理 MCP Server（{adapter.NAME} 领域）已启动（streamable-http）: "
-              f"http://{args.host}:{args.port}/mcp", file=sys.stderr)
-        server.run(transport="streamable-http", host=args.host, port=args.port)
+        print(f"[info] 本体推理 MCP Server（{state['adapter'].NAME} 领域）已启动（streamable-http）: "
+              f"http://{args.host}:{args.port}/mcp；kill -HUP / 文件监听热重载", file=sys.stderr, flush=True)
+        _run_server(server, "streamable-http", _on_sighup, host=args.host, port=args.port)
     return 0
 
 

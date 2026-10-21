@@ -11,6 +11,7 @@ class ReasonRequest(BaseModel):
     type: Literal["capability_match", "orchestrate", "assign"]
     task: str = ""
     agent: str = ""
+    persist: bool = False      # assign 增量落盘（REQ-05，001 批次能力经 API 暴露）
 
 
 class ClassifyRequest(BaseModel):
@@ -20,6 +21,7 @@ class ClassifyRequest(BaseModel):
     capabilities: list[str] = []
     constraints: list[str] = []
     risk_level: int = 3
+    persist: bool = False      # 增量落盘（REQ-05，001 批次能力经 API 暴露）
 
 
 # ---------------- 通用查询接口（L1：与本体定义无关） ----------------

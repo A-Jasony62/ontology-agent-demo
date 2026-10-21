@@ -25,8 +25,10 @@
         GET  /api/ontology/export       导出物化后完整本体（turtle / rdfxml / n3）
 """
 
+import hashlib
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
@@ -35,7 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from rdflib import RDF, OWL
 
 import reasoner.engine as engine_mod
-from reasoner.engine import get_engine
+from reasoner.engine import get_engine, OntologyEngine
 from domains import load_domain
 from .schemas import (
     ReasonRequest, ClassifyRequest,
@@ -45,6 +47,8 @@ from .schemas import (
 ENGINE = get_engine()
 # 领域适配器：运行时动态加载（domains/agent_task 为当前默认领域）
 ADAPTER = load_domain("agent_task", ENGINE)
+# 引擎加载时刻（reload 时更新；REQ-03 health 字段）
+ENGINE_LOADED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 app = FastAPI(
     title="本体 × 智能体协作 Demo API",
@@ -84,16 +88,51 @@ def index():
     return {"message": "frontend 未构建，请先运行 frontend/app 下的 npm run build"}
 
 
+def _baseline_hash() -> str:
+    """本体基线（核心 .owl + extensions/ 全部文件）内容哈希——两端一致性判据。"""
+    files = [engine_mod.ONTO_PATH]
+    if ENGINE.extensions_dir and os.path.isdir(ENGINE.extensions_dir):
+        files += [os.path.join(ENGINE.extensions_dir, f)
+                  for f in sorted(os.listdir(ENGINE.extensions_dir))]
+    h = hashlib.sha256()
+    for f in files:
+        with open(f, "rb") as fh:
+            h.update(fh.read())
+    return h.hexdigest()
+
+
+def _ontology_version() -> str:
+    """本体版本：优先 owl:versionInfo，未配置时回退文件 mtime（REQ-03）。"""
+    for obj in ENGINE.g.objects(None, OWL.versionInfo):
+        return str(obj)
+    return datetime.fromtimestamp(os.path.getmtime(engine_mod.ONTO_PATH)).isoformat(timespec="seconds")
+
+
 @app.get("/api/health")
 def health():
+    # 顶层保留 v1.x 的 agents/tasks/assignments 字段（既有调用方兼容）；
+    # 新增 REQ-03 字段：version / loaded_at / dirty / pending_changes / changelog / counts
     return {
         "status": "ok",
         "ontology": "agent_task_ontology.owl",
+        "version": _ontology_version(),
+        "loaded_at": ENGINE_LOADED_AT,
         "reasoner": "OWL 2 RL (owlrl) + 业务规则 R2/R4",
         "domain": ADAPTER.NAME,
+        "dirty": ADAPTER.change_count > 0,
+        "pending_changes": ADAPTER.change_count,
+        "changelog": ADAPTER.changelog[-5:],
         "agents": len(ADAPTER.agents()),
         "tasks": len(ADAPTER.tasks()),
         "assignments": len(ADAPTER.assignments),
+        "counts": {
+            "agents": len(ADAPTER.agents()),
+            "tasks": len(ADAPTER.tasks()),
+            "capabilities": len(ADAPTER.engine.individuals_of(ADAPTER.c.capability_class)),
+            "constraints": len(ADAPTER.engine.individuals_of(ADAPTER.c.constraint_class)),
+            "assignments": len(ADAPTER.assignments),
+            "inferred_triples": len(ENGINE.g) - len(ENGINE.raw),
+        },
     }
 
 
@@ -111,14 +150,15 @@ def reason(req: ReasonRequest):
     if req.type == "orchestrate":
         return ADAPTER.orchestrate(_uri(req.task))
     if req.type == "assign":
-        return ADAPTER.assign(_uri(req.task), _uri(req.agent))
+        return ADAPTER.assign(_uri(req.task), _uri(req.agent), persist=req.persist)
     raise HTTPException(status_code=400, detail=f"不支持的推理类型: {req.type}")
 
 
 @app.post("/api/classify")
 def classify(req: ClassifyRequest):
     _require_default_ontology()
-    return ADAPTER.classify(req.name, req.capabilities, req.constraints, req.risk_level)
+    return ADAPTER.classify(req.name, req.capabilities, req.constraints,
+                            req.risk_level, persist=req.persist)
 
 
 @app.post("/api/explain")
@@ -222,6 +262,58 @@ def export_ontology(format: str = "turtle"):
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="ontology.{suffix}"'},
     )
+
+
+# ---------------- 本体管理（002 批次：热重载 / 状态 / 一致性） ----------------
+
+@app.post("/api/ontology/reload")
+def reload_ontology():
+    """热重载（REQ-01.1）：重新加载核心 + extensions/ 全部增量并推理。
+
+    原子性：新引擎构造 + 推理全部成功后才替换模块级 ENGINE / 重建 ADAPTER；
+    失败返回 400，旧状态继续可用（Python 全局引用替换即原子，在途查询不受影响）。
+    """
+    global ENGINE, ADAPTER, ENGINE_LOADED_AT
+    import time as _time
+    t0 = _time.monotonic()
+    try:
+        new_engine = OntologyEngine(onto_path=engine_mod.ONTO_PATH,
+                                    extensions_dir=ENGINE.extensions_dir)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"重载失败（旧状态保持可用）：{exc}")
+    elapsed = round((_time.monotonic() - t0) * 1000, 2)
+    # 全部成功 → 原子替换
+    ENGINE = new_engine
+    ADAPTER = load_domain("agent_task", new_engine)
+    ENGINE_LOADED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return {
+        "status": "ok",
+        "loaded": os.path.basename(new_engine.onto_path),
+        "triples": len(new_engine.g),
+        "individuals": len(set(new_engine.g.subjects(RDF.type, OWL.NamedIndividual))),
+        "elapsed_ms": elapsed,
+    }
+
+
+@app.get("/api/ontology/status")
+def ontology_status():
+    """本体状态与两端一致性（REQ-02/REQ-03）。
+
+    判据：基线文件哈希（核心 .owl + extensions/）+ 内存变更计数。
+    同一份基线哈希 + 相同 dirty/pending_changes 即两端一致
+    （MCP 端由只读 status 工具 / CLI 探测，见批次二文档）。
+    """
+    return {
+        "ontology": os.path.basename(engine_mod.ONTO_PATH),
+        "extensions_dir": ENGINE.extensions_dir,
+        "baseline_file_hash": _baseline_hash(),
+        "dirty": ADAPTER.change_count > 0,
+        "pending_changes": ADAPTER.change_count,
+        "changelog": ADAPTER.changelog[-5:],
+        "last_commit": ADAPTER.last_commit,
+        "assignments": len(ADAPTER.assignments),
+        "loaded_at": ENGINE_LOADED_AT,
+    }
 
 
 # 新前端静态资源（frontend/app/dist/assets）——存在时挂载
