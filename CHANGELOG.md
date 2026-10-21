@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-21
+
 ### Added
 
 - **运维闭环（003 批次）**：
@@ -115,7 +117,8 @@
   `docs/KNOWLEDGE_BEYOND_OWL.md`、`docs/DOMAIN_PACKAGE_GENERATION.md`（领域包自动生成路线图）
 - **许可证**：MIT（根 LICENSE；前端另附上游 MIT 许可证）
 
-[Unreleased]: https://github.com/jasony62/ontology-agent-demo/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jasony62/ontology-agent-demo/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jasony62/ontology-agent-demo/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jasony62/ontology-agent-demo/releases/tag/v0.1.0
 
 > AI生成
