@@ -14,6 +14,7 @@
 """
 
 import os
+from datetime import date
 
 from rdflib import Graph, Namespace, URIRef, Literal, BNode, RDF, RDFS, OWL
 import owlrl
@@ -223,6 +224,63 @@ class OntologyEngine:
             (local(s), local(o))
             for s, o in self.g.subject_objects(self.NS[property_name])
         )
+
+    # ---------------- 时序 ABox（主体级 validFrom/validTo，查询层过滤） ----------------
+
+    @staticmethod
+    def _iso_date(text: str) -> bool:
+        """是否为 ISO 日期格式（YYYY-MM-DD）。"""
+        try:
+            from datetime import datetime
+            datetime.strptime(text, "%Y-%m-%d")
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def _first_literal(self, subject: str, property_name: str) -> str | None:
+        """读主体某属性的第一个字面量值（如 validFrom / validTo）。"""
+        for v in self.g.objects(self.NS[subject], self.NS[property_name]):
+            if isinstance(v, Literal):
+                return str(v)
+        return None
+
+    def facts_at(self, property_name: str, at: str | None = None) -> dict:
+        """按时间过滤返回属性的活跃事实（主体级 validFrom/validTo 半开窗口）。
+
+        - at 缺省 = 今天（date.today()）
+        - 时间窗半开区间 [from, to)：at == from 活跃、at == to 失效（边界确定性）
+        - 无时间戳的事实永远活跃（与现状行为一致，零回归）
+        - 非法格式时间戳 → warning 显式返回 + 按未标注处理（诚实降级，不静默丢弃）
+
+        返回 {"property", "at", "facts", "inactive", "warnings"}——inactive 保留已失效
+        事实（「事实失效而非删除」，可回溯历史）。
+        """
+        at = at or date.today().isoformat()
+        facts: list[dict] = []
+        inactive: list[dict] = []
+        warnings: list[str] = []
+        for s, o in self.subject_objects(property_name):
+            vf = self._first_literal(s, "validFrom")
+            vt = self._first_literal(s, "validTo")
+            active = True
+            if vf is not None and not self._iso_date(vf):
+                warnings.append(f"{s} 的 validFrom 非法（{vf}），已按未标注处理")
+                vf = None
+            if vt is not None and not self._iso_date(vt):
+                warnings.append(f"{s} 的 validTo 非法（{vt}），已按未标注处理")
+                vt = None
+            if vf is not None and vf > at:
+                active = False
+            if vt is not None and vt <= at:
+                active = False
+            entry = {"subject": s, "object": o}
+            if active:
+                facts.append(entry)
+            else:
+                entry["valid_from"], entry["valid_to"] = vf, vt
+                inactive.append(entry)
+        return {"property": property_name, "at": at,
+                "facts": facts, "inactive": inactive, "warnings": warnings}
 
     def has_type(self, individual: str, class_name: str) -> bool:
         """个体（短名）是否属于该类（含子类/推理结论）。"""
