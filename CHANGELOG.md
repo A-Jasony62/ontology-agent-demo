@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增 MCP 受控语义接口（`mcp/policy.py` + 领域包 `access_policy.json`）：语义白名单 + 预定义查询，配置后生效
+  - 语义白名单：只暴露允许的类/谓词（含子类继承），白名单外查询被拒并返回诚实提示；策略激活时 `query_sparql` 禁用
+  - 预定义查询：`predefined_queries()` / `run_predefined_query(name, params)` 受控调用，渲染后复核谓词白名单
+  - **默认关闭**：未配置策略时通用工具行为与旧版逐字节一致（向后兼容硬标准）
+
 ## [0.2.2] - 2026-10-22
 
 ### Added
