@@ -5,12 +5,30 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-22
+
 ### Added
 
 - 新增 CQ 驱动 TBox 建模入口（`domains/agent_task` 领域包扩展，白名单纪律内、零 LLM 依赖）：
   - `guide_tbox_draft`：能力问题（CQ）→ 宿主 LLM 生成指令（prompt）+ 现有 schema 对照 + 自查清单
   - `validate_tbox_draft`：服务端校验工位（L1 语法 → L2 命名空间/结构 → L3 一致性 → L4 公理表达力 → L5 术语覆盖），返回 verdict（pass/fixable/reject）与修复建议，供 LLM 建模迭代
 - 新增 MCP 通用工具 `explain_proof` 与引擎模块 `reasoner/proof.py`：给定一个结论三元组，返回机器可读的结构化证明 JSON `{mode, rule, axioms, premises, conclusion}`——支持属性链（R1）/传递闭包（R3）/subClassOf 类型判定（R4）三类推理规则；`mode` 区分 `asserted`（直接断言）/ `derived`（推理产生，含公理依据与前提事实链）/ `unproven`（图中不存在），诚实降级不伪造证明。用于评测证据锚、可溯源审计与程序化问答（与中文叙事 `explain()` 互补）
+
+### Fixed
+
+- `POST /api/ontology/import` 空数组 `{"individuals": []}` 被记为一次变更（issue #7）：
+  `import_individuals` 在事务入口对空列表短路，直接返回 `{imported: 0, individuals: [], persisted: None}`，
+  不 reparse、不写 changelog、不置 dirty（adapter 层兜底，覆盖 API / CLI / MCP 全部调用路径）
+- MCP 热重载后新建的 `extensions/` 目录未生效、`persist=true` 仍失败（issue #6）：
+  `_reload` 改为显式传 None 让 `OntologyEngine.__init__` 总是重新检测 extensions/ 目录
+  （与 API 端 reload 行为一致，新建目录无需重启进程）；`status` 工具新增 `extensions_dir`
+  字段暴露目录启用状态；重载日志补充 `extensions_dir`
+
+### Tests
+
+- 新增 `test_import_empty_list_is_noop_no_dirty`（空导入不置 dirty）与
+  `test_engine_detects_newly_created_ext_dir`（extensions/ 目录新建后重建引擎即启用）
+- 全量 103 passed
 
 ## [0.2.1] - 2026-10-21
 
@@ -144,7 +162,8 @@
   `docs/KNOWLEDGE_BEYOND_OWL.md`、`docs/DOMAIN_PACKAGE_GENERATION.md`（领域包自动生成路线图）
 - **许可证**：MIT（根 LICENSE；前端另附上游 MIT 许可证）
 
-[Unreleased]: https://github.com/jasony62/ontology-agent-demo/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/jasony62/ontology-agent-demo/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/jasony62/ontology-agent-demo/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/jasony62/ontology-agent-demo/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jasony62/ontology-agent-demo/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jasony62/ontology-agent-demo/releases/tag/v0.1.0
