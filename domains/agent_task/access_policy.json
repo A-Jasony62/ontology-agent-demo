@@ -1,0 +1,16 @@
+{
+  "allowed_classes": ["Agent", "Task", "Capability", "ComplianceRequirement"],
+  "allowed_predicates": ["has_capability", "required_by", "can_execute", "depends_on", "assigned_to"],
+  "predefined_queries": {
+    "who_executes": {
+      "description": "哪些智能体可执行指定任务",
+      "params": {"task": "任务短名，如 t_login_dev"},
+      "sparql": "SELECT ?agent WHERE { ?agent <http://demo.example.org/agent-task-ontology#can_execute> {{task}} }"
+    },
+    "task_dependencies": {
+      "description": "任务直接依赖哪些任务",
+      "params": {"task": "任务短名，如 t_deploy"},
+      "sparql": "SELECT ?dep WHERE { {{task}} <http://demo.example.org/agent-task-ontology#depends_on> ?dep }"
+    }
+  }
+}

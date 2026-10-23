@@ -61,6 +61,14 @@ from reasoner.proof import build_proof
 from domains import load_domain
 from mcp.server.mcpserver import MCPServer
 
+# 本地受控语义策略（mcp/policy.py）。注：仓库的 mcp/ 目录与 pip 的 mcp SDK 同名，
+# `from mcp import policy` 会被 SDK 包遮蔽——改为从本文件同目录加载独立模块。
+_policy_spec = importlib.util.spec_from_file_location(
+    "_mcp_policy", os.path.join(os.path.dirname(os.path.abspath(__file__)), "policy.py"))
+_policy_mod = importlib.util.module_from_spec(_policy_spec)
+_policy_spec.loader.exec_module(_policy_mod)
+policy_mod = _policy_mod
+
 
 def build_server(get_engine, get_adapter, domain_name: str, description: str) -> MCPServer:
     """组装 MCP Server：领域工具（随领域包）+ 通用工具（引擎直接提供）。
@@ -79,30 +87,59 @@ def build_server(get_engine, get_adapter, domain_name: str, description: str) ->
     mod = importlib.import_module(f"domains.{domain_name}.mcp")
     mod.register_tools(server, get_adapter)
 
-    # 通用工具（L1：与本体定义无关，任意 .owl 可用）
-    _register_generic_tools(server, get_engine)
+    # 通用工具（L1：与本体定义无关，任意 .owl 可用）；受控语义策略随领域包走
+    _register_generic_tools(server, get_engine, policy_mod.load_policy(domain_name))
     return server
 
 
-def _register_generic_tools(server: MCPServer, get_engine) -> None:
+def _register_generic_tools(server: MCPServer, get_engine, policy=None) -> None:
+    """注册通用工具（引擎直接提供，与本体定义无关）。
+
+    policy（SemanticPolicy | None）：非空且 enabled 时启用语义白名单门禁——类/谓词
+    白名单外拒绝、query_sparql 禁用、新增预定义查询；None 或未启用时逐字节向后兼容。
+    """
+
+    active = policy is not None and policy.enabled
+
+    def _deny(reason: str, **extra) -> dict:
+        return {
+            "denied": True,
+            "reason": reason,
+            "visible_classes": policy.visible_classes() if policy else [],
+            "visible_predicates": policy.visible_predicates() if policy else [],
+            **extra,
+        }
+
     @server.tool(description="SPARQL 查询（通用）：执行 SPARQL SELECT 并返回结果行，IRI 值自动转为短名。适用于任何本体，不依赖领域语义。")
     def query_sparql(sparql: str) -> dict:
+        if active:
+            return _deny("已开启语义白名单，请改用 run_predefined_query", available_queries=policy.query_names())
         return {"results": get_engine().query_sparql(sparql)}
 
     @server.tool(description="个体查询（通用）：返回指定类（短名，含其子类）的全部个体短名。如 individuals('Agent')。")
     def individuals(class_name: str) -> dict:
+        if active and not policy.class_allowed(get_engine(), class_name):
+            return _deny(f"类「{class_name}」不在语义白名单")
         return {"class": class_name, "individuals": get_engine().individuals(class_name)}
 
-    @server.tool(description="类层次（通用）：返回本体全部类的 name/label/direct_parent。")
+    @server.tool(description="类层次（通用）：返回本体全部类的 name/label/direct_parent（启用白名单时仅返回白名单类及其子类）。")
     def classes() -> dict:
+        if active:
+            eng = get_engine()
+            return {"classes": [c for c in eng.classes() if policy.class_allowed(eng, c["name"])]}
         return {"classes": get_engine().classes()}
 
     @server.tool(description="个体类型（通用）：返回指定个体推理后的全部类型短名（含子类推理结论）。如 types_of('dev_agent')。")
     def types_of(individual: str) -> dict:
+        if active:
+            types = get_engine().types_of(individual)
+            return {"individual": individual, "types": [t for t in types if policy.class_allowed(get_engine(), t)]}
         return {"individual": individual, "types": get_engine().types_of(individual)}
 
     @server.tool(description="属性取值（通用）：返回主体-属性 的取值列表。如 property_values('dev_agent', 'has_capability')。")
     def property_values(subject: str, property_name: str) -> dict:
+        if active and not policy.predicate_allowed(property_name):
+            return _deny(f"谓词「{property_name}」不在语义白名单")
         return {"subject": subject, "property": property_name,
                 "values": get_engine().property_values(subject, property_name)}
 
@@ -118,6 +155,28 @@ def _register_generic_tools(server: MCPServer, get_engine) -> None:
         "用于评测证据锚、可溯源审计与程序化问答。"))
     def explain_proof(subject: str, predicate: str, object: str) -> dict:
         return build_proof(get_engine(), subject, predicate, object)
+
+    @server.tool(description=(
+        "受控预定义查询清单（通用）：启用语义白名单后，列出可安全调用的预定义查询及参数说明；"
+        "未启用时返回未配置提示。"))
+    def predefined_queries() -> dict:
+        if active:
+            return {"policy_enabled": True, "available_queries": policy.query_descriptions()}
+        return {"policy_enabled": False, "available_queries": [],
+                "message": "未配置语义白名单（access_policy.json），请配置后启用"}
+
+    @server.tool(description=(
+        "执行受控预定义查询（通用）：按名调用预定义查询并传参，结果只含白名单内的业务概念字段。"
+        "参数为短名（如任务/智能体短名）；渲染后由白名单复核。未启用策略时返回提示。"))
+    def run_predefined_query(name: str, params: dict) -> dict:
+        if not active:
+            return {"policy_enabled": False, "message": "未配置语义白名单（access_policy.json），请配置后启用"}
+        eng = get_engine()
+        short_to_iri = lambda v: f"<{eng.NS[v]}>"
+        rendered = policy.render_predefined(name, params, short_to_iri)
+        if not rendered["ok"]:
+            return {"denied": True, "reason": rendered["error"]}
+        return {"query": rendered["name"], "results": eng.query_sparql(rendered["sparql"])}
 
 
 async def _async_main(main_async, on_sighup):
