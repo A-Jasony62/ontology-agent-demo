@@ -178,6 +178,14 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None) -> None:
             return {"denied": True, "reason": rendered["error"]}
         return {"query": rendered["name"], "results": eng.query_sparql(rendered["sparql"])}
 
+    @server.tool(description=(
+        "时序事实查询（通用）：返回指定属性在时刻 at（缺省=今天）的活跃事实。按主体级 "
+        "validFrom/validTo 时间窗过滤（半开区间 [from,to)：at==from 活跃、at==to 失效）；"
+        "无时间戳的事实永远活跃；失效事实进 inactive（失效而非删除，原始三元组仍在图中）；"
+        "非法时间戳进 warnings。如 active_facts('assigned_to', '2026-10-22')。"))
+    def active_facts(property: str, at: str | None = None) -> dict:
+        return get_engine().facts_at(property, at)
+
 
 async def _async_main(main_async, on_sighup):
     """在事件循环内注册 SIGHUP（asyncio 可靠信号路径）后运行 MCP 服务。"""

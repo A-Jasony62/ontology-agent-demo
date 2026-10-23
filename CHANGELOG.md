@@ -12,6 +12,7 @@
   - 预定义查询：`predefined_queries()` / `run_predefined_query(name, params)` 受控调用，渲染后复核谓词白名单
   - **默认关闭**：未配置策略时通用工具行为与旧版逐字节一致（向后兼容硬标准）
 - 新增 SHACL 数据体检工具 `validate_shapes`（agent_task 领域包）：按 `pipeline/shapes/agent_task.ttl` 对 ABox 做 SHACL 形状校验，返回结构化报告（conforms/summary/violations，violations 逐条给出焦点个体、属性路径、约束与中文说明）。落地上游 `docs/MODELING_PIPELINE.md` §5.4 G4 已约定但未实现的 SHACL 闸门（pipeline/ 目录此前为空）；新增 `pyshacl` 依赖
+- 新增时序 ABox 支持（主体级 `validFrom`/`validTo`）：`engine.facts_at(property, at)` 按时间过滤活跃事实，MCP 通用工具 `active_facts`——半开区间（at==from 活跃、at==to 失效）、无时间戳事实永远活跃（零回归）、失效事实进 `inactive`（失效而非删除，原始三元组仍在图中）、非法时间戳进 `warnings`。参考 Graphiti「事实失效而非删除」机制
 
 ## [0.2.2] - 2026-10-22
 
