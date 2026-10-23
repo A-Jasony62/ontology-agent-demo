@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-23
+
 ### Added
 
 - 新增 MCP 受控语义接口（`mcp/policy.py` + 领域包 `access_policy.json`）：语义白名单 + 预定义查询，配置后生效
