@@ -11,6 +11,7 @@
   - 语义白名单：只暴露允许的类/谓词（含子类继承），白名单外查询被拒并返回诚实提示；策略激活时 `query_sparql` 禁用
   - 预定义查询：`predefined_queries()` / `run_predefined_query(name, params)` 受控调用，渲染后复核谓词白名单
   - **默认关闭**：未配置策略时通用工具行为与旧版逐字节一致（向后兼容硬标准）
+- 新增 SHACL 数据体检工具 `validate_shapes`（agent_task 领域包）：按 `pipeline/shapes/agent_task.ttl` 对 ABox 做 SHACL 形状校验，返回结构化报告（conforms/summary/violations，violations 逐条给出焦点个体、属性路径、约束与中文说明）。落地上游 `docs/MODELING_PIPELINE.md` §5.4 G4 已约定但未实现的 SHACL 闸门（pipeline/ 目录此前为空）；新增 `pyshacl` 依赖
 
 ## [0.2.2] - 2026-10-22
 

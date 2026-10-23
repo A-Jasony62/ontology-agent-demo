@@ -1,0 +1,16 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix demo: <http://demo.example.org/agent-task-ontology#> .
+
+# agent_task 领域 SHACL 数据形状（G4 约束层）
+# 路径与命名对齐 docs/MODELING_PIPELINE.md §5.4 G4（pipeline/shapes/<domain>.ttl）。
+# 设计守则：只声明「当前数据满足」的约束——不让现有 ABox 变红；约束只表达
+# 关系型/取值类规则（非空/基数），推理公理（属性链/传递）交给 OWL（引擎已处理）。
+
+demo:TaskShape a sh:NodeShape ;
+  # 仅约束 SimpleTask（复合任务由子任务组合，无单一能力要求）
+  sh:targetClass demo:SimpleTask ;
+  sh:property [ sh:path demo:requires_capability ; sh:minCount 1 ] .
+
+demo:AgentShape a sh:NodeShape ;
+  sh:targetClass demo:Agent ;
+  sh:property [ sh:path demo:has_capability ; sh:minCount 1 ] .

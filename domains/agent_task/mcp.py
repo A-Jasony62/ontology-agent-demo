@@ -13,6 +13,96 @@ from mcp.server.mcpserver import MCPServer
 from reasoner.engine import local
 from . import cq_tbox
 
+import os
+from rdflib import Graph, Namespace, RDF, URIRef
+
+try:
+    import pyshacl
+except ImportError:  # 依赖未装时工具返回诚实提示，不崩 server
+    pyshacl = None
+
+SH = Namespace("http://www.w3.org/ns/shacl#")
+_SHAPES_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "pipeline", "shapes", "agent_task.ttl")
+
+
+def _constraint_name(comp) -> str:
+    """sourceConstraintComponent → 可读约束名（MinCountConstraintComponent → minCount 1）。"""
+    if comp is None:
+        return "?"
+    name = str(comp).rsplit("#", 1)[-1].replace("ConstraintComponent", "")
+    if name in ("MinCount", "MaxCount"):
+        return f"{name[:1].lower()}{name[1:]} 1"
+    return name
+
+
+def _focus_kind(engine, focus_name: str) -> str:
+    """按个体类型给中文类别（Agent / Task / 其他）。"""
+    try:
+        types = [local(t) for t in engine.g.objects(engine.NS[focus_name], RDF.type)]
+        if "Agent" in types:
+            return "Agent"
+        if "Task" in types:
+            return "Task"
+    except Exception:
+        pass
+    return "实体"
+
+
+def _shacl_violations(results_graph, engine) -> list:
+    """把 pySHACL 结果图转短名化的违规清单（含中文说明）。"""
+    out = []
+    for res in results_graph.subjects(RDF.type, SH.ValidationResult):
+        focus = results_graph.value(res, SH.focusNode)
+        path = results_graph.value(res, SH.resultPath)
+        val = results_graph.value(res, SH.value)
+        comp = results_graph.value(res, SH.sourceConstraintComponent)
+        focus_name = local(focus) if focus is not None else "?"
+        path_name = local(path) if path is not None else "?"
+        constraint = _constraint_name(comp)
+        kind = _focus_kind(engine, focus_name)
+        msg = (f"{kind}「{focus_name}」缺少 {path_name}（至少需要 1 个）"
+               if "minCount" in constraint else
+               f"{kind}「{focus_name}」的 {path_name} 违反约束（{constraint}）")
+        out.append({
+            "focus_node": focus_name,
+            "path": path_name,
+            "constraint": constraint,
+            "severity": "Violation",
+            "value": local(val) if isinstance(val, URIRef) else (str(val) if val is not None else None),
+            "message": msg,
+        })
+    return out
+
+
+def run_shacl_validation(engine) -> dict:
+    """按 pipeline/shapes/agent_task.ttl 对引擎 ABox 做 SHACL 校验（结构化报告，不抛异常）。"""
+    if pyshacl is None:
+        return {"conforms": None, "configured": False,
+                "error": "缺少依赖 pyshacl，请先 pip install pyshacl（见 requirements.txt）"}
+    try:
+        shapes = Graph()
+        shapes.parse(_SHAPES_PATH, format="turtle")
+    except Exception as exc:
+        return {"conforms": None, "configured": False,
+                "error": f"SHACL 形状文件加载失败：{exc}", "shapes_path": _SHAPES_PATH}
+    try:
+        conforms, results_graph, _text = pyshacl.validate(
+            engine.raw, shacl_graph=shapes, abort_on_first=False)
+    except Exception as exc:
+        return {"conforms": None, "configured": True,
+                "error": f"SHACL 校验执行失败：{exc}"}
+    violations = _shacl_violations(results_graph, engine)
+    return {
+        "conforms": conforms,
+        "summary": {
+            "shapes_checked": len(list(shapes.subjects(RDF.type, SH.NodeShape))),
+            "violations": len(violations),
+        },
+        "violations": violations,
+    }
+
 
 def register_tools(server: MCPServer, get_adapter) -> None:
     """把本领域的 MCP 工具注册到 server。
@@ -94,3 +184,11 @@ def register_tools(server: MCPServer, get_adapter) -> None:
         "期望公理（能力→属性链/依赖→传递/约束→disjoint）。只验 TBox，不替宿主编造 ABox 断言。"))
     def validate_tbox_draft(ttl: str, cqs: list[str] | None = None) -> dict:
         return cq_tbox.validate_tbox_draft(ttl, cqs)
+
+    @server.tool(description=(
+        "数据体检（SHACL，领域）：按 pipeline/shapes/agent_task.ttl 对当前 ABox 实例数据做"
+        "SHACL 形状校验，返回结构化报告 {conforms, summary, violations}——violations 逐条给出"
+        "焦点个体短名、属性路径、违反的约束与中文说明；不合格的列出来而非抛异常。"
+        "用于「LLM 抽取/生成 → SHACL 体检 → 合格才入库」的 AI 数据治理闭环。"))
+    def validate_shapes() -> dict:
+        return run_shacl_validation(get_adapter().engine)
