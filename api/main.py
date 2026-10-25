@@ -23,6 +23,10 @@
         GET  /api/ontology/materialized 物化 diff：原始断言 / 推理新增 / 统计
         GET  /api/ontology/source       当前本体原始 RDF/XML 文本
         GET  /api/ontology/export       导出物化后完整本体（turtle / rdfxml / n3）
+    在线编辑（v1.4.0：编辑模型 / 保存写回 / 下载）：
+        GET  /api/ontology/edit-model   当前本体 → 结构化编辑模型 JSON（rdflib 全量提取）
+        POST /api/ontology/save         编辑模型 → RDF/XML 写盘 + 重建引擎 + 重推理（new/overwrite）
+        GET  /api/ontology/download     下载 data/uploads/ 内保存的本体文件（防路径穿越）
 """
 
 import hashlib
@@ -55,6 +59,7 @@ from domains import load_domain
 from .schemas import (
     ReasonRequest, ClassifyRequest, RevokeRequest, ImportRequest,
     SparqlRequest, IndividualsRequest, TypesRequest, PropertyRequest,
+    SaveOntologyRequest,
 )
 
 ENGINE = get_engine()
@@ -66,7 +71,7 @@ ENGINE_LOADED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
 app = FastAPI(
     title="本体 × 智能体协作 Demo API",
     description="智能体任务编排本体的推理 API：能力匹配 / 编排 / 冲突检测 / 推导链 + 通用本体查询 + 本体管理",
-    version="1.3.0",
+    version="1.4.0",
 )
 
 APP_DIST = Path(__file__).resolve().parent.parent / "frontend" / "app" / "dist"
@@ -275,6 +280,89 @@ def export_ontology(format: str = "turtle"):
         content=content,
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="ontology.{suffix}"'},
+    )
+
+
+# ---------------- 在线编辑（v1.4.0：编辑模型 / 保存写回 / 下载） ----------------
+
+@app.get("/api/ontology/edit-model")
+def edit_model():
+    """当前本体 → 结构化编辑模型 JSON（任意 OWL 可提取，默认本体完整可编辑）。"""
+    return ENGINE.edit_model()
+
+
+@app.post("/api/ontology/save")
+def save_ontology(req: SaveOntologyRequest):
+    """保存编辑结果：编辑模型 → RDF/XML 写盘 → 重建引擎 + 重推理。
+
+    mode=new    另存到 data/uploads/（进入通用模式，领域推理降级）；
+    mode=overwrite  覆盖当前已加载本体（默认本体覆盖后领域推理保留）。
+    """
+    global ENGINE, ADAPTER
+    try:
+        content = ENGINE.model_to_rdf(req.model.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"编辑模型非法：{exc}")
+
+    # 文件名安全：仅 basename + 白名单扩展名（防路径穿越 / 任意文件写入）
+    if req.mode == "overwrite":
+        target = Path(ENGINE.onto_path)
+    else:
+        raw_name = os.path.basename(req.filename or "")
+        if not raw_name.lower().endswith((".owl", ".rdf", ".xml")):
+            raw_name = f"{raw_name.rsplit('.', 1)[0] if '.' in raw_name else raw_name or 'edited'}.owl"
+            if not raw_name.endswith(".owl"):
+                raw_name = "edited.owl"
+        stem, _, ext = raw_name.rpartition(".")
+        safe_name = f"{stem}-{uuid.uuid4().hex[:8]}.{ext.lower()}"
+        target = UPLOAD_DIR / safe_name
+
+    try:
+        target.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"保存失败：{exc}")
+
+    # 重建引擎（绕过单例缓存：直接构造新实例）并重绑定模块级引用
+    try:
+        new_engine = OntologyEngine(str(target), extensions_dir=None)
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"保存后加载失败（已回滚文件）：{exc}")
+
+    engine_mod._engine = new_engine
+    ENGINE = new_engine
+    if new_engine.onto_path == engine_mod.ONTO_PATH:
+        # 覆盖默认本体：重建领域适配器，R1–R4 领域推理保留
+        ADAPTER = load_domain("agent_task", new_engine)
+
+    materialized = new_engine.materialized()
+    return {
+        "status": "ok",
+        "path": str(target),
+        "filename": Path(target).name,
+        "mode": req.mode,
+        "stats": {
+            "triples_before": materialized["stats"]["triples_asserted"],
+            "triples_after": materialized["stats"]["triples_materialized"],
+            "inferred_added": materialized["stats"]["inferred_added"],
+            "classes": len(new_engine.classes()),
+            "individuals": len(set(new_engine.g.subjects(RDF.type, OWL.NamedIndividual))),
+        },
+        "materialized": materialized,
+    }
+
+
+@app.get("/api/ontology/download")
+def download_ontology(name: str):
+    """下载 data/uploads/ 内保存的本体文件（仅允许该目录，防路径穿越）。"""
+    safe = os.path.basename(name)
+    path = UPLOAD_DIR / safe
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"文件不存在：{safe}")
+    return FileResponse(
+        path,
+        media_type="application/rdf+xml",
+        filename=safe,
     )
 
 

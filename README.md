@@ -124,7 +124,10 @@ bash scripts/backup.sh        # 核心 .owl + extensions/ → backups/<时间戳
 - **OWL 源码**：RDF/XML 源码语法高亮查看，支持源码编辑（保存时解析校验回读）
 - **导入 / 导出**：拖拽上传 `.owl`/`.rdf` 解析展示；导出当前模型（RDF/XML）或物化后本体（Turtle / RDF/XML）
 - **可视化编辑**：实体 / 属性 / 关系 CRUD + 实时校验，改动即时反映到图谱
+- **在线编辑本体定义**：任意 OWL 本体的在线编辑——四栏编辑（类层次 / 对象属性 / 数据属性 / 实例断言），编辑模型由后端 rdflib 全量提取（不受前端 parser 子集限制，默认本体也可编辑）；撤销 / 重做 / 脏标记 / 实时校验；保存由后端序列化 OWL 并重建引擎自动重推理，物化三视图与图谱联动刷新；支持**另存为新本体**（写入 `data/uploads/` 并进入通用模式）或**覆盖当前本体**（默认本体覆盖后领域推理保留，需二次确认），保存后可直接**下载 OWL 文件**
 - **物化展示**：调用推理引擎物化 diff（原始断言 ∪ 推理新增），统计卡片显示三元组数量变化
+
+> **在线编辑边界**：编辑模型 = 类 / 属性 / 个体子集（复杂公理如 restriction、属性链不进入编辑模型）；「覆盖当前本体」会重建该 OWL 文件，若原文件含复杂公理，覆盖后这些公理将不保留（另存可保留原文件）。校验规则刻意宽松（开放世界假设）：id 仅要求非空且无 IRI 危险字符，中文短名 / 下划线短名合法；对象断言可指向未声明实体。
 
 ```bash
 # 开发（先启动后端 :8000）
@@ -184,6 +187,14 @@ npm run build               # 产物 frontend/app/dist
 | DELETE | `/api/ontology/individual/{name}` | 删除个体 `?persist&cascade`（被引用时保护，cascade 连带清理反向引用） |
 | POST | `/api/ontology/revoke` | 撤销任务分配 `{task, agent, persist}` |
 | POST | `/api/ontology/import` | 批量导入任务个体（事务：任一校验失败整体拒绝）`{individuals, persist}` |
+
+在线编辑接口（v1.4.0 起，在线编辑本体定义；保存后自动重建引擎并重推理）：
+
+| 方法   | 路径                 | 功能                                                           |
+| ---- | ------------------ | ------------------------------------------------------------ |
+| GET  | `/api/ontology/edit-model` | 当前本体 → 结构化编辑模型 JSON（classes/objectProps/dataProps/individuals） |
+| POST | `/api/ontology/save` | 保存编辑模型 `{model, filename, mode: "new"\|"overwrite"}`；`new` 写入 `data/uploads/` 进入通用模式，`overwrite` 覆盖当前本体（默认本体重建领域推理）；返回 `{status, path, filename, mode, stats, materialized}` |
+| GET  | `/api/ontology/download?name=` | 下载已保存的 OWL 文件（basename 白名单 + `data/uploads/` 限定，防路径穿越） |
 
 通用查询接口（v1.1.0 起，**与本体定义无关**，任意 `.owl` 加载后均可使用）：
 

@@ -132,3 +132,31 @@ textarea.source-editor {
 }
 .code-copy:hover { background: rgba(255,255,255,.22); }
 .guide-notes { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; color: #44566b; line-height: 1.8; }
+
+/* ---------- 在线编辑本体定义（OntologyEditor） ---------- */
+.editor-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.editor-toolbar h2 { font-size: 16px; color: #33455f; margin: 0; }
+.editor-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dirty-dot { width: 9px; height: 9px; border-radius: 50%; background: #c3cdd8; display: inline-block; }
+.dirty-dot.on { background: #d83b01; box-shadow: 0 0 0 2px rgba(216,59,1,.2); }
+.ef-filename { width: 170px; padding: 5px 8px; font-size: 12.5px; border: 1px solid var(--border); border-radius: 6px; }
+button.danger { background: #d83b01; color: #fff; }
+button.danger:disabled { opacity: .55; }
+.download-link { display: inline-block; padding: 5px 10px; text-decoration: none; font-size: 12.5px; }
+.notice-banner { background: #eaf6ee; border: 1px solid #b7ddc3; color: #1a6b34; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.ef-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.ef-tree { max-height: 520px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.ef-tree-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; border: 1px solid #eef1f5; border-radius: 6px; padding: 6px; }
+.ef-tree-row .ef-field { flex: 1 1 90px; }
+.ef-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: #8a94a6; min-width: 60px; }
+.ef-field input, .ef-field select { font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; width: 100%; box-sizing: border-box; }
+.ef-row { border: 1px solid #eef1f5; border-radius: 6px; padding: 6px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+.ef-row-head { display: flex; gap: 6px; align-items: center; }
+.ef-row-head input { flex: 1; font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; }
+.ef-row-sub { display: flex; gap: 8px; }
+.ef-row-sub .ef-field { flex: 1; }
+.ef-chars { display: flex; gap: 10px; flex-wrap: wrap; }
+.ef-chars label { display: inline-flex; align-items: center; gap: 3px; }
+.ef-assertions { display: flex; flex-direction: column; gap: 4px; }
+.ef-assertion { display: flex; gap: 6px; align-items: center; }
+.ef-assertion select, .ef-assertion input { flex: 1; font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; }
