@@ -38,6 +38,25 @@ export interface InferStats {
   individuals: number;
 }
 
+/** 在线编辑模型（与后端 EditModel 对齐） */
+export interface EditModelPayload {
+  ontologyName: string;
+  namespace: string;
+  classes: { id: string; label: string; parent: string | null; description: string }[];
+  objectProps: { id: string; label: string; domain: string | null; range: string | null; characteristics: string[] }[];
+  dataProps: { id: string; label: string; domain: string | null; range: string | null }[];
+  individuals: { id: string; label: string; types: string[]; assertions: { prop: string; value: string; isObject: boolean }[] }[];
+}
+
+export interface SaveModelResponse {
+  status: string;
+  path: string;
+  filename: string;
+  mode: 'new' | 'overwrite';
+  stats: { triples_before: number; triples_after: number; inferred_added: number; classes: number; individuals: number };
+  materialized: MaterializedResponse;
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options);
   if (!res.ok) {
@@ -84,4 +103,18 @@ export const api = {
     if (!res.ok) throw new Error(`导出失败: ${res.status} ${res.statusText}`);
     return res.blob();
   },
+
+  /** 当前本体 → 结构化编辑模型（在线编辑） */
+  editModel: () => request<EditModelPayload>('/api/ontology/edit-model'),
+
+  /** 保存编辑结果（另存 / 覆盖），返回落盘路径与重推理 stats */
+  saveModel: (model: unknown, filename: string, mode: 'new' | 'overwrite') =>
+    request<SaveModelResponse>('/api/ontology/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, filename, mode }),
+    }),
+
+  /** 下载保存的本体文件 */
+  downloadUrl: (name: string) => `/api/ontology/download?name=${encodeURIComponent(name)}`,
 };

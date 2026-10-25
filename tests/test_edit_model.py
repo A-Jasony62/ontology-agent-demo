@@ -1,0 +1,218 @@
+"""在线编辑本体定义（v1.4.0）测试：编辑模型提取 / 保存写回 / 下载。
+
+覆盖：edit-model 提取（类/属性/个体断言）、model_to_rdf round-trip、
+save 另存/覆盖两模式、通用模式守卫、文件名安全、download 防路径穿越。
+"""
+
+import os
+import sys
+
+import pytest
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import api.main as M  # noqa: E402
+import reasoner.engine as E  # noqa: E402
+
+client = TestClient(M.app)
+
+EDIT_MODEL_SAMPLE = {
+    "ontologyName": "edited",
+    "namespace": "http://example.org/edited#",
+    "classes": [
+        {"id": "Person", "label": "人员", "parent": None, "description": ""},
+        {"id": "Employee", "label": "员工", "parent": "Person", "description": "公司员工"},
+    ],
+    "objectProps": [
+        {"id": "worksFor", "label": "任职于", "domain": "Employee", "range": "Person", "characteristics": []},
+    ],
+    "dataProps": [
+        {"id": "salary", "label": "薪资", "domain": "Employee", "range": "integer"},
+    ],
+    "individuals": [
+        {"id": "alice", "label": "爱丽丝", "types": ["Employee"],
+         "assertions": [{"prop": "worksFor", "value": "Person", "isObject": True},
+                        {"prop": "salary", "value": "12000", "isObject": False}]},
+    ],
+}
+
+
+@pytest.fixture
+def restore_engine():
+    """save 测试后完整恢复：默认本体磁盘文件 + 单例 + api.main 全局（避免污染其它测试）。
+
+    注意：mode=overwrite 会真写磁盘（默认本体），必须恢复文件内容；否则后续
+    测试会加载到被编辑过的本体导致推理断言失败。
+    """
+    backup = None
+    with open(E.ONTO_PATH, "rb") as f:
+        backup = f.read()
+    yield
+    with open(E.ONTO_PATH, "wb") as f:
+        f.write(backup)  # 恢复磁盘默认本体
+    E._engine = None
+    new = E.get_engine()
+    M.ENGINE = new
+    from domains import load_domain
+    M.ADAPTER = load_domain("agent_task", new)
+
+
+# ---------- 编辑模型提取 ----------
+
+def test_edit_model_default_structure():
+    """默认本体可提取完整编辑模型（类/对象属性/数据属性/个体均非空）。"""
+    r = client.get("/api/ontology/edit-model")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["classes"], "默认本体应包含类"
+    assert d["objectProps"], "默认本体应包含对象属性"
+    assert d["individuals"], "默认本体应包含个体"
+    assert d["namespace"].endswith("#")
+    ids = {c["id"] for c in d["classes"]}
+    assert "Agent" in ids  # 领域核心类
+    obj_ids = {p["id"] for p in d["objectProps"]}
+    assert "has_capability" in obj_ids
+
+
+def test_edit_model_class_parent():
+    """类层次：至少一个类带直接父类，且父类 id 在类集合内。"""
+    d = client.get("/api/ontology/edit-model").json()
+    ids = {c["id"] for c in d["classes"]}
+    with_parent = [c for c in d["classes"] if c.get("parent")]
+    assert with_parent, "默认本体应存在 subClassOf 层次"
+    for c in with_parent:
+        assert c["parent"] in ids, f"{c['id']} 的父类 {c['parent']} 不在类集合"
+
+
+def test_edit_model_individual_assertions():
+    """个体：dev_agent 带类型断言与对象属性断言。"""
+    d = client.get("/api/ontology/edit-model").json()
+    by_id = {i["id"]: i for i in d["individuals"]}
+    assert "dev_agent" in by_id
+    ind = by_id["dev_agent"]
+    assert ind["types"], "个体应有类型断言"
+    props = {a["prop"] for a in ind["assertions"]}
+    assert "has_capability" in props
+
+
+def test_edit_model_props_domain_range():
+    """对象属性含 domain/range（至少一处为已有类）。"""
+    d = client.get("/api/ontology/edit-model").json()
+    cls_ids = {c["id"] for c in d["classes"]}
+    has_dr = [p for p in d["objectProps"] if p.get("domain") and p.get("range")]
+    assert has_dr, "默认本体应存在带 domain/range 的对象属性"
+    for p in has_dr:
+        assert p["domain"] in cls_ids and p["range"] in cls_ids
+
+
+# ---------- model_to_rdf round-trip ----------
+
+def test_model_to_rdf_roundtrip():
+    """编辑模型 → RDF/XML → 重新解析：预期三元组全部存在。"""
+    xml = M.ENGINE.model_to_rdf(EDIT_MODEL_SAMPLE)
+    assert "<rdf:RDF" in xml
+    g = E.Graph()
+    g.parse(data=xml, format="xml")
+    ns = "http://example.org/edited#"
+    assert (E.URIRef(ns + "Employee"), E.RDFS.subClassOf, E.URIRef(ns + "Person")) in g
+    assert (E.URIRef(ns + "Employee"), E.RDF.type, E.OWL.Class) in g
+    assert (E.URIRef(ns + "worksFor"), E.RDF.type, E.OWL.ObjectProperty) in g
+    assert (E.URIRef(ns + "worksFor"), E.RDFS.domain, E.URIRef(ns + "Employee")) in g
+    assert (E.URIRef(ns + "alice"), E.RDF.type, E.URIRef(ns + "Employee")) in g
+    assert (E.URIRef(ns + "alice"), E.URIRef(ns + "salary"), E.Literal("12000")) in g
+    assert (E.URIRef(ns + "alice"), E.URIRef(ns + "worksFor"), E.URIRef(ns + "Person")) in g
+
+
+# ---------- 保存（另存 / 覆盖） ----------
+
+def test_save_new_mode(restore_engine):
+    """另存：文件落盘 data/uploads/、引擎切换、物化刷新、新类生效。"""
+    model = client.get("/api/ontology/edit-model").json()
+    model["classes"].append({"id": "NewClass", "label": "新类", "parent": None, "description": ""})
+    r = client.post("/api/ontology/save", json={
+        "model": model, "filename": "my-edited.owl", "mode": "new",
+    })
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ok"
+    assert d["mode"] == "new"
+    assert "/uploads/" in d["path"]
+    assert d["filename"].endswith(".owl")
+    assert d["stats"]["triples_after"] >= d["stats"]["triples_before"]
+    assert "materialized" in d and d["materialized"]["stats"]["triples_asserted"] > 0
+    # 引擎已切换：edit-model 包含新类
+    m2 = client.get("/api/ontology/edit-model").json()
+    assert any(c["id"] == "NewClass" for c in m2["classes"])
+    assert m2["ontologyName"] != "agent_task_ontology"
+
+
+def test_save_new_enters_generic_mode(restore_engine):
+    """另存后进入通用模式：领域端点返回 400 并提示。"""
+    model = client.get("/api/ontology/edit-model").json()
+    r = client.post("/api/ontology/save", json={"model": model, "mode": "new"})
+    assert r.status_code == 200
+    ont = client.get("/api/ontology")
+    assert ont.status_code == 400
+    assert "通用模式" in ont.json()["detail"]
+
+
+def test_save_overwrite_keeps_domain(restore_engine):
+    """覆盖默认本体：引擎路径不变、领域推理保留。"""
+    model = client.get("/api/ontology/edit-model").json()
+    model["classes"][0]["label"] = "改过的类名"
+    r = client.post("/api/ontology/save", json={"model": model, "mode": "overwrite"})
+    assert r.status_code == 200
+    assert r.json()["mode"] == "overwrite"
+    import reasoner.engine as E_mod
+    assert M.ENGINE.onto_path == E_mod.ONTO_PATH  # 覆盖的是默认本体
+    ont = client.get("/api/ontology")
+    assert ont.status_code == 200  # 领域能力保留
+    # 文件内容已更新（编辑生效）
+    m2 = client.get("/api/ontology/edit-model").json()
+    assert any(c["label"] == "改过的类名" for c in m2["classes"])
+
+
+def test_save_rejects_empty_class_id(restore_engine):
+    """非法编辑模型（空 id 类）→ 400。"""
+    model = {"ontologyName": "x", "namespace": "http://example.org/x#",
+             "classes": [{"id": "", "label": "无名"}],
+             "objectProps": [], "dataProps": [], "individuals": []}
+    r = client.post("/api/ontology/save", json={"model": model, "mode": "new"})
+    assert r.status_code == 400
+    assert "id" in r.json()["detail"] or "不能为空" in r.json()["detail"]
+
+
+def test_save_filename_sanitized(restore_engine):
+    """文件名穿越被阻止：只取 basename 并加短 uuid 前缀。"""
+    model = client.get("/api/ontology/edit-model").json()
+    r = client.post("/api/ontology/save", json={
+        "model": model, "filename": "../../etc/evil.owl", "mode": "new",
+    })
+    assert r.status_code == 200
+    name = r.json()["filename"]
+    assert ".." not in name and "/" not in name and name.endswith(".owl")
+
+
+# ---------- 下载（防路径穿越） ----------
+
+def test_download_saved_file(restore_engine):
+    """保存后可通过 download 下载落盘 OWL 文件。"""
+    model = client.get("/api/ontology/edit-model").json()
+    r = client.post("/api/ontology/save", json={"model": model, "mode": "new"})
+    assert r.status_code == 200
+    name = r.json()["filename"]
+    dl = client.get(f"/api/ontology/download?name={name}")
+    assert dl.status_code == 200
+    assert "<rdf:RDF" in dl.text
+
+
+def test_download_missing_file():
+    r = client.get("/api/ontology/download?name=nope.owl")
+    assert r.status_code == 404
+
+
+def test_download_path_traversal():
+    """路径穿越被拒绝：basename 化后文件不存在 → 404。"""
+    r = client.get("/api/ontology/download?name=../../etc/passwd")
+    assert r.status_code == 404

@@ -8,8 +8,10 @@ import SourceView from './components/SourceView';
 import ImportModal from './components/ImportModal';
 import ExportDialog from './components/ExportDialog';
 import Designer from './components/Designer';
+import OntologyEditor from './components/OntologyEditor';
 import MaterializedPanel from './components/MaterializedPanel';
 import ServiceGuideModal from './components/ServiceGuideModal';
+import { useEditorStore } from './store/editorStore';
 
 type SourceMode = 'closed' | 'view' | 'edit';
 
@@ -33,6 +35,33 @@ export default function App() {
   const [sourceMode, setSourceMode] = useState<SourceMode>('closed');
   const [designerOpen, setDesignerOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  // 独立 selector（zustand getSnapshot 需稳定引用，禁止返回对象字面量）
+  const editorOpenStore = useEditorStore((s) => s.open);
+  const editorSetLoading = useEditorStore((s) => s.setLoading);
+  const editorSetError = useEditorStore((s) => s.setError);
+  const editorDirty = useEditorStore((s) => s.dirty);
+  const editorCloseStore = useEditorStore((s) => s.closeEditor);
+
+  /** 打开在线编辑器：拉取后端编辑模型（任意 OWL 可编辑） */
+  const openEditor = async () => {
+    setEditorOpen(true);
+    editorSetLoading(true);
+    try {
+      const model = await api.editModel();
+      editorOpenStore(model);
+    } catch (e) {
+      editorSetError(`编辑模型加载失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      editorSetLoading(false);
+    }
+  };
+
+  const closeEditor = () => {
+    if (editorDirty && !window.confirm('有未保存的编辑修改，确定关闭编辑器？')) return;
+    editorCloseStore();
+    setEditorOpen(false);
+  };
 
   // 挂载初始化：健康检查 + 物化数据 + 源码解析为可编辑模型
   useEffect(() => {
@@ -74,6 +103,7 @@ export default function App() {
           <button className={designerOpen ? '' : 'secondary'} onClick={() => setDesignerOpen((v) => !v)}>
             {designerOpen ? '关闭编辑器' : '可视化编辑'}
           </button>
+          <button className="secondary" onClick={openEditor}>在线编辑</button>
           <button className="secondary" onClick={() => setGuideOpen(true)}>服务能力</button>
         </div>
         <span className={`health ${backendOk ? 'ok' : ''}`}>{backendOk ? '后端已连接' : '后端未连接'}</span>
@@ -107,6 +137,7 @@ export default function App() {
         </div>
 
         {designerOpen && <Designer />}
+        {editorOpen && <OntologyEditor onClose={closeEditor} />}
       </main>
 
       {importOpen && <ImportModal onClose={() => setImportOpen(false)} />}

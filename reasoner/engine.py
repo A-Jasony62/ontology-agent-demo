@@ -503,6 +503,190 @@ class OntologyEngine:
             data = data.decode("utf-8")
         return data
 
+    # ---------------- 在线编辑：编辑模型提取 / 重建序列化（v1.4.0） ----------------
+
+    PROPERTY_CHARACTERISTICS = (
+        "FunctionalProperty", "InverseFunctionalProperty", "TransitiveProperty",
+        "SymmetricProperty", "AsymmetricProperty", "ReflexiveProperty", "IrreflexiveProperty",
+    )
+
+    def edit_model(self) -> dict:
+        """从当前本体（原始断言图）提取结构化编辑模型 JSON。
+
+        任意 OWL 可提取（rdflib 全量解析，不受前端 parser 子集限制）：
+          classes      id / label / parent（直接父类短名）/ description
+          objectProps  id / label / domain / range / characteristics（功能性/传递性等）
+          dataProps    id / label / domain / range（标量类型短名）
+          individuals  id / label / types（类型断言）/ assertions（对象/数据属性取值）
+        """
+        ns = str(self.NS)
+        g = self.raw
+
+        classes: list[dict] = []
+        for cls in sorted(g.subjects(RDF.type, OWL.Class), key=str):
+            if isinstance(cls, BNode):
+                continue
+            parent = next(
+                (o for o in g.objects(cls, RDFS.subClassOf)
+                 if isinstance(o, URIRef) and o != OWL.Thing),
+                None,
+            )
+            comment = g.value(cls, RDFS.comment)
+            classes.append({
+                "id": local(cls),
+                "label": self.label(cls),
+                "parent": local(parent) if parent is not None else None,
+                "description": str(comment) if comment is not None else "",
+            })
+
+        object_props: list[dict] = []
+        for p in sorted(g.subjects(RDF.type, OWL.ObjectProperty), key=str):
+            if isinstance(p, BNode):
+                continue
+            domain = next((o for o in g.objects(p, RDFS.domain) if isinstance(o, URIRef)), None)
+            rng = next((o for o in g.objects(p, RDFS.range) if isinstance(o, URIRef)), None)
+            chars = [c for c in self.PROPERTY_CHARACTERISTICS if (p, RDF.type, OWL[c]) in g]
+            object_props.append({
+                "id": local(p),
+                "label": self.label(p),
+                # owl:Thing 无约束意义，归一为 None
+                "domain": local(domain) if domain is not None and domain != OWL.Thing else None,
+                "range": local(rng) if rng is not None and rng != OWL.Thing else None,
+                "characteristics": chars,
+            })
+
+        data_props: list[dict] = []
+        for p in sorted(g.subjects(RDF.type, OWL.DatatypeProperty), key=str):
+            if isinstance(p, BNode):
+                continue
+            domain = next((o for o in g.objects(p, RDFS.domain) if isinstance(o, URIRef)), None)
+            rng = next(iter(g.objects(p, RDFS.range)), None)
+            data_props.append({
+                "id": local(p),
+                "label": self.label(p),
+                "domain": local(domain) if domain is not None and domain != OWL.Thing else None,
+                "range": local(rng) if isinstance(rng, URIRef) else (str(rng) if rng is not None else None),
+            })
+
+        individuals: list[dict] = []
+        for ind in sorted(g.subjects(RDF.type, OWL.NamedIndividual), key=str):
+            if isinstance(ind, BNode):
+                continue
+            types = sorted({
+                local(t) for t in g.objects(ind, RDF.type)
+                if isinstance(t, URIRef) and t != OWL.NamedIndividual
+            })
+            assertions: list[dict] = []
+            for p, o in g.predicate_objects(ind):
+                if not isinstance(p, URIRef) or p == RDF.type or self._is_meta_predicate(p):
+                    continue
+                assertions.append({
+                    "prop": local(p),
+                    "value": local(o) if isinstance(o, URIRef) else str(o),
+                    "isObject": isinstance(o, URIRef),
+                })
+            individuals.append({
+                "id": local(ind),
+                "label": self.label(ind),
+                "types": types,
+                "assertions": assertions,
+            })
+
+        return {
+            "ontologyName": os.path.splitext(os.path.basename(self.onto_path))[0],
+            "namespace": ns,
+            "classes": classes,
+            "objectProps": object_props,
+            "dataProps": data_props,
+            "individuals": individuals,
+        }
+
+    def model_to_rdf(self, model: dict, pretty: bool = True) -> str:
+        """编辑模型 JSON → RDF/XML 文本（保存写盘用）。
+
+        命名空间取 model.namespace（缺省回退当前引擎 NS）；空前缀绑定保持
+        输出可读（xml 序列化生成 xmlns）。支持：类（含 subClassOf/label/comment）、
+        对象/数据属性（domain/range/特性）、个体（类型断言 + 属性断言）。
+        """
+        ns = str(model.get("namespace") or self.NS)
+        g = Graph()
+        g.bind("", ns)
+        g.bind("owl", OWL)
+        g.bind("rdfs", RDFS)
+
+        def iri(name: str) -> URIRef:
+            if not name:
+                raise ValueError("实体 id 不能为空")
+            return URIRef(ns + name if not str(name).startswith("http") else name)
+
+        for cls in model.get("classes", []):
+            node = iri(cls["id"])
+            g.add((node, RDF.type, OWL.Class))
+            label = cls.get("label")
+            if label:
+                g.add((node, RDFS.label, Literal(label)))
+            desc = cls.get("description")
+            if desc:
+                g.add((node, RDFS.comment, Literal(desc)))
+            parent = cls.get("parent")
+            if parent:
+                g.add((node, RDFS.subClassOf, iri(parent)))
+
+        for p in model.get("objectProps", []):
+            node = iri(p["id"])
+            g.add((node, RDF.type, OWL.ObjectProperty))
+            label = p.get("label")
+            if label:
+                g.add((node, RDFS.label, Literal(label)))
+            domain = p.get("domain")
+            if domain:
+                g.add((node, RDFS.domain, iri(domain)))
+            rng = p.get("range")
+            if rng:
+                g.add((node, RDFS.range, iri(rng)))
+            for c in p.get("characteristics", []):
+                if c in self.PROPERTY_CHARACTERISTICS:
+                    g.add((node, RDF.type, OWL[c]))
+
+        for p in model.get("dataProps", []):
+            node = iri(p["id"])
+            g.add((node, RDF.type, OWL.DatatypeProperty))
+            label = p.get("label")
+            if label:
+                g.add((node, RDFS.label, Literal(label)))
+            domain = p.get("domain")
+            if domain:
+                g.add((node, RDFS.domain, iri(domain)))
+            rng = p.get("range")
+            if rng:
+                # 标量短名（xsd:string/integer…）→ XSD 命名空间；其余按 IRI
+                from rdflib.namespace import XSD
+                xsd_short = {str(getattr(XSD, a)): a for a in dir(XSD) if not a.startswith("_")}
+                if rng in xsd_short:
+                    g.add((node, RDFS.range, URIRef(str(XSD) + rng)))
+                else:
+                    g.add((node, RDFS.range, iri(rng)))
+
+        for ind in model.get("individuals", []):
+            node = iri(ind["id"])
+            g.add((node, RDF.type, OWL.NamedIndividual))
+            label = ind.get("label")
+            if label:
+                g.add((node, RDFS.label, Literal(label)))
+            for t in ind.get("types", []):
+                g.add((node, RDF.type, iri(t)))
+            for a in ind.get("assertions", []):
+                prop = iri(a["prop"])
+                if a.get("isObject"):
+                    g.add((node, prop, iri(a["value"])))
+                else:
+                    g.add((node, prop, Literal(a["value"])))
+
+        data = g.serialize(format="xml")
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        return data
+
 
 _engine = None
 
