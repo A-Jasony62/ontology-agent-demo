@@ -7,7 +7,6 @@
 
 ### Added
 
-<<<<<<< HEAD
 - 新增 CQ 自动出题器（agent_task 领域包，`cq_prompts.json` 增补 `cq_generation` 段 + `cq_gen.py` 双工具）：补齐「自动出题 → CQ 建模（`guide_tbox_draft`）→ 判卷」三步链的最前端
   - `guide_cq_generation(focus?)`：生成宿主 LLM 出题指令（现有 schema 术语对照、四类题型定义 retrieval/derived/counting/negative 与建议配比 10:10:5:5、措辞规则、输出 JSON 格式）；`focus` 提供全新领域描述时降级 `from_description` 模式（无 schema 对照仍可用）
   - `validate_cqs(cqs)`：服务端确定性质检（零 LLM 依赖）——问题句式 / schema 术语锚点（过宽题拦截）/ 本次输入内查重 + 对 `cq_tests.json` 既有题库查重（文件不存在时如实 `skipped`）/ 规则式题型预标（`predicted_type` 为建议标注，终审是挑题人）/ 四类题型覆盖度报告（分布 + 缺口提醒）

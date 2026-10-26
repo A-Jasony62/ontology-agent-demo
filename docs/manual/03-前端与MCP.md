@@ -40,14 +40,52 @@ docker compose up -d mcp
 2. 传输类型选 **HTTP**，MCP 服务器 URL 填 `http://127.0.0.1:9000/mcp`；
 3. 保存后即可在对话中直接调用本体推理工具。
 
-### 工具清单（实测握手 serverInfo：ontology-reasoning v1.3.0）
+### 工具清单（26 个：通用 12 + 领域 14）
 
-| 类别 | 工具 | 说明 |
-|---|---|---|
-| 通用 | `query_sparql` / `individuals` / `classes` / `types_of` / `property_values` / `infer` | 与本体无关的查询（SPARQL/个体/类/类型/属性/重推理） |
-| 通用 | `explain_proof` | 结构化证明导出：给定结论三元组 → `{mode, rule, axioms, premises, conclusion}`（asserted/derived/unproven），支持属性链/传递/子类三类规则 |
-| 通用 | `predefined_queries` / `run_predefined_query` | 受控预定义查询：启用语义白名单后按名调用，结果只含白名单字段 |
-| 通用 | `active_facts` | 时序事实查询：按 `validFrom/validTo` 半开区间 `[from,to)` 过滤活跃事实，失效事实进 inactive，非法时间戳进 warnings |
-| 领域 | 能力匹配 / 编排 / 分配 / 分类 / 一致性 / 图谱 / 实体清单 | 绑定默认领域包（agent_task），语义配置化 |
+**通用工具**（`mcp/mcp_server.py`，与本体无关，任意 `.owl` 可用）：
+
+| 工具 | 说明 |
+|---|---|
+| `query_sparql(sparql)` | SPARQL SELECT，结果 IRI 自动转短名 |
+| `individuals(class_name)` | 指定类（含子类）的个体列表 |
+| `classes()` | 全部类层次（name/label/parent） |
+| `types_of(individual)` | 个体推理后的全部类型 |
+| `property_values(subject, property_name)` | 主体-属性取值列表 |
+| `infer()` | 重新推理，返回三元组/个体统计 |
+| `explain_proof(subject, predicate, object)` | 结构化证明导出：`{mode, rule, axioms, premises, conclusion}`（asserted/derived/unproven），支持属性链/传递/子类三类规则 |
+| `predefined_queries()` / `run_predefined_query(name, params)` | 受控预定义查询（需语义白名单） |
+| `active_facts(property, at?)` | 时序事实查询：validFrom/validTo 半开区间 `[from,to)`，失效进 inactive、非法时间戳进 warnings |
+| `guard_status()` | **调用护栏状态**：预算用量/循环阈值/缓存命中/审计尾部；未启用时如实返回 enabled=false（不报错） |
+| `pipeline_gate(ttl, abox?, gates?)` | **管线质量门禁**：建模草稿按 G1–G4 fail-fast 过闸，返回逐闸 `{status, evidence, remediation}` 与 `{overall, failed_at, next}` |
+
+**领域工具**（`domains/agent_task/mcp.py`，绑定默认领域包，语义配置化）：
+
+| 工具 | 说明 |
+|---|---|
+| `capability_match(task)` | 能力匹配（R1/R2），附推导链 |
+| `orchestrate(task)` | 任务编排（R3）：拆解依赖链 + 拓扑排序 + 逐环节匹配 |
+| `assign(task, agent, persist?)` | 任务分配 + R4 合规冲突检测 |
+| `classify(name, capabilities, constraints, risk_level, persist?)` | 新增任务个体并自动分类 |
+| `consistency()` | 全量一致性 / 合规冲突检查 |
+| `explain()` | 最近一次查询的推导链（"为什么"） |
+| `ontology()` | 本体结构（类/个体/边，图谱渲染） |
+| `status()` | 本体状态（基线哈希/脏标记，与 API 一致性校验） |
+| `entities()` | 实体短名清单（辅助选参） |
+| `guide_tbox_draft(cqs)` | CQ 建模-指南：输出 TBox 生成指令 + schema 对照 + 自查清单 |
+| `validate_tbox_draft(ttl, cqs?)` | CQ 建模-校验：TBox 草稿分级验证（L1 语法→L5 术语覆盖）+ verdict（pass/fixable/reject） |
+| `validate_shapes()` | SHACL 数据体检：按 `pipeline/shapes/agent_task.ttl` 返回 {conforms, summary, violations} |
+| `guide_cq_generation(focus?)` | **CQ 自动出题-指南**：生成宿主 LLM 出题指令（四类题型配比、措辞规则、JSON 格式）；focus 提供全新领域时降级 from_description 模式 |
+| `validate_cqs(cqs)` | **CQ 自动出题-质检**：确定性质检（零 LLM 依赖）——句式/schema 术语锚点/查重/题型预标/覆盖度报告，返回 usable/revise/duplicate |
 
 **受控语义接口（v0.2.3+）**：配置领域包 `access_policy.json` 语义白名单后，MCP 只暴露允许的类/谓词（含子类继承），白名单外查询被拒并返回诚实提示；策略激活时 `query_sparql` 禁用。
+
+**Agent 调用护栏（tool_guard，Unreleased）**：为通用工具注册管道统一加装四道防线（默认关闭，`guard_config.json` 置 `enabled: true` 启用）：
+
+| 防线 | 行为 |
+|---|---|
+| 预算熔断 | 单会话工具调用超 `session_budget` 返回结构化提示（不崩、不静默），缓存命中不消耗预算 |
+| 循环拦截 | 同工具同参数连续达 `loop_threshold` 次 → `loop_detected` 拦截并提示换路 |
+| 缓存复用 | 同参数 TTL-Call 内直接返回（`_guard.cached=true`），时敏查询可关 cache |
+| 审计留痕 | 环形缓冲保留最近 `audit_tail` 条，`guard_status` 在线可查——"每次调用有账可查" |
+
+**管线质量门禁（pipeline_gate，Unreleased）**：把建模草稿（Turtle）按四道闸门 fail-fast 过闸——**G1 DL 格式**（防 OWL-Full/数据属性主键陷阱）→ **G2 一致性**（owlrl 物化+矛盾检查，HermiT 可选增强）→ **G3 物化冒烟**（领域 `gates_smoke.json` 断言集）→ **G4 SHACL**（`pipeline/shapes/<domain>.ttl`）。遇 fail 即停（后续闸门标 `not_run`），`failed_at` 定位卡闸位置，每闸输出 `{status, evidence, remediation}`；`gates` 参数支持单闸调试。实测默认本体：四闸全过（`overall=pass, next=S4`）；加违规个体 `demo:t_bad_task a demo:SimpleTask` 后 G4 fail（violations 定位 `t_bad_task`、`path=requires_capability`）。
