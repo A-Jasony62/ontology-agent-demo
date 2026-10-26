@@ -1,0 +1,10 @@
+{
+  "gates": ["G1", "G2", "G3", "G4"],
+  "G1_dl_format": {"enabled": true},
+  "G2_consistency": {"enabled": true},
+  "G3_materialize_smoke": {"enabled": true},
+  "G4_shacl_tests": {
+    "enabled": true,
+    "shapes_file": "pipeline/shapes/agent_task.ttl"
+  }
+}

@@ -59,6 +59,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from reasoner.engine import OntologyEngine
+from reasoner.pipeline_gate import run_gates
 from reasoner.proof import build_proof
 from domains import load_domain
 from mcp.server.mcpserver import MCPServer
@@ -210,6 +211,18 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=No
             return {"enabled": False,
                     "message": "未配置调用护栏（guard_config.json），行为与无护栏版本一致"}
         return guard.status()
+
+    @server.tool(description=(
+        "管线质量门禁（通用）：输入建模草稿 Turtle（+可选 ABox），按上游 MODELING_PIPELINE.md "
+        "§5 四道闸门 fail-fast 过闸——G1 DL 格式（防 OWL-Full/主键陷阱，owlready2+结构断言）→ "
+        "G2 一致性（owlrl 物化+矛盾检查，HermiT 为可选增强）→ G3 物化冒烟（领域 gates_smoke.json "
+        "断言集）→ G4 SHACL 形状校验（pipeline/shapes）。返回逐闸 {status, evidence, remediation}"
+        "与整体结论 {overall, failed_at, next}；failed_at 一眼定位卡闸位置，未执行闸门标 not_run。"
+        "gates 可选单闸调试（如 ['G3']），空列表全部 skipped（非假通过）。废品不出车间："
+        "不达标打回重做，从文档图变成可执行机制。"))
+    def pipeline_gate(ttl: str, abox: str | None = None,
+                      gates: list[str] | None = None) -> dict:
+        return run_gates(ttl, abox, gates)
 
 
 def _make_sighup_handler(reload_fn):

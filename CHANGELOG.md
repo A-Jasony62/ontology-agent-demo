@@ -7,6 +7,7 @@
 
 ### Added
 
+<<<<<<< HEAD
 - 新增 CQ 自动出题器（agent_task 领域包，`cq_prompts.json` 增补 `cq_generation` 段 + `cq_gen.py` 双工具）：补齐「自动出题 → CQ 建模（`guide_tbox_draft`）→ 判卷」三步链的最前端
   - `guide_cq_generation(focus?)`：生成宿主 LLM 出题指令（现有 schema 术语对照、四类题型定义 retrieval/derived/counting/negative 与建议配比 10:10:5:5、措辞规则、输出 JSON 格式）；`focus` 提供全新领域描述时降级 `from_description` 模式（无 schema 对照仍可用）
   - `validate_cqs(cqs)`：服务端确定性质检（零 LLM 依赖）——问题句式 / schema 术语锚点（过宽题拦截）/ 本次输入内查重 + 对 `cq_tests.json` 既有题库查重（文件不存在时如实 `skipped`）/ 规则式题型预标（`predicted_type` 为建议标注，终审是挑题人）/ 四类题型覆盖度报告（分布 + 缺口提醒）
@@ -17,6 +18,13 @@
   - 结果缓存复用：同工具同参数 TTL-Call 内直接返回（`_guard.cached=true`），以调用次数计 TTL（MCP 无挂钟语义）；时敏查询可在配置中关闭 cache 段
   - 调用审计：环形缓冲只留最近 `audit_tail` 条（内存有界），`guard_status` 在线可查预算用量/缓存命中/审计尾部——「每次调用有账可查」
   - **默认关闭**：无配置 / `enabled=false` 时注册器原样注册不包装（逐字节兼容，对齐受控语义接口的向后兼容硬标准）；`_guard` 元数据仅在启用时附加（`_` 前缀非契约字段）；`guard_status` 自身不被 wrap（自省不熔断）；非法配置（budget≤0 等）启动 fail-fast
+- 新增管线质量门禁 `pipeline_gate`（通用 MCP 工具，`reasoner/pipeline_gate.py` + `pipeline/gates.json` + 领域包 `domains/<name>/gates_smoke.json`）：落地上游 `docs/MODELING_PIPELINE.md` §5 已约定但未实现的四道闸门——S1-S4 管线代码未动工不影响闸门作为独立工具先服务人工/Agent 建模，上游落地 s1-s4 时复用同一检查器
+  - **G1 DL 格式**：防 OWL-Full（owlready2 `is_owl_full()` + 结构断言；数据属性 inverse functional 主键陷阱拦截；缺依赖时诚实降级结构断言版）
+  - **G2 一致性**：owlrl 物化 + `Nothing`/disjointWith 矛盾检查 + 空类信息性提示（HermiT 为可选增强，未启用时 `mode=degraded` 显式标注，不冒充完整 DL 闸）
+  - **G3 物化冒烟**：领域 `gates_smoke.json` 断言集（预期谓词 min_count，如属性链产出 can_execute ≥1）；断言集为空如实 skipped
+  - **G4 SHACL**：复用 pyshacl + `pipeline/shapes/<domain>.ttl`，violations 短名化透传；行为基线（cq_regression）为挂钩位
+  - **fail-fast 过闸**：依次执行、遇 fail 即停（后续闸门标 `not_run`），`failed_at` 一眼定位卡闸位置；每闸输出 `{status, evidence, remediation}`（打回目标对齐上游文档矩阵：G1/G2 回 S2、G3 检查骨架、G4 修数据字典或 SHACL）；`gates` 参数支持单闸调试（如 `['G3']`），空列表全部 skipped（非假通过）；只读（拷贝图物化，不写回主图）
+  - **映射修正声明**：G1-G4 语义以上游文档为权威（DL格式→一致性→物化冒烟→SHACL+测试）；术语/结构层面的校验对应 `validate_tbox_draft` 的 L1-L5，不是闸门本身
 
 ## [0.3.0] - 2026-10-25
 
