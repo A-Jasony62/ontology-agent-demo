@@ -11,6 +11,12 @@
   - `guide_cq_generation(focus?)`：生成宿主 LLM 出题指令（现有 schema 术语对照、四类题型定义 retrieval/derived/counting/negative 与建议配比 10:10:5:5、措辞规则、输出 JSON 格式）；`focus` 提供全新领域描述时降级 `from_description` 模式（无 schema 对照仍可用）
   - `validate_cqs(cqs)`：服务端确定性质检（零 LLM 依赖）——问题句式 / schema 术语锚点（过宽题拦截）/ 本次输入内查重 + 对 `cq_tests.json` 既有题库查重（文件不存在时如实 `skipped`）/ 规则式题型预标（`predicted_type` 为建议标注，终审是挑题人）/ 四类题型覆盖度报告（分布 + 缺口提醒）
   - 动机：CQ 已从「建模前界定范围」升级为「生成→验收集成的判卷标尺」（CQ4OE 基准，arXiv 2609.26029）；LLM 出题覆盖度弱于领域专家、出题质量成为新瓶颈（arXiv 2604.16258）——出完必须过质检，不是出完就用
+- 新增 Agent 调用护栏（`mcp/tool_guard.py` + 领域包 `guard_config.json` + `guard_status` 查询工具）：为全部 10 个通用工具在注册管道统一加装「预算熔断 + 循环拦截 + 缓存复用 + 审计留痕」四道防线（读侧运行时防护，Agentic RAG 防失控共识的工程化落地）
+  - 会话预算熔断：单会话工具执行次数超限返回结构化提示（`budget_exceeded`，含 `calls_used`/`budget`/调整指引），不崩、不静默；缓存命中不消耗预算
+  - 循环检测拦截：同工具同参数连续调用达 `loop_threshold` → 判定打转，拦截并提示换路（`loop_detected`）
+  - 结果缓存复用：同工具同参数 TTL-Call 内直接返回（`_guard.cached=true`），以调用次数计 TTL（MCP 无挂钟语义）；时敏查询可在配置中关闭 cache 段
+  - 调用审计：环形缓冲只留最近 `audit_tail` 条（内存有界），`guard_status` 在线可查预算用量/缓存命中/审计尾部——「每次调用有账可查」
+  - **默认关闭**：无配置 / `enabled=false` 时注册器原样注册不包装（逐字节兼容，对齐受控语义接口的向后兼容硬标准）；`_guard` 元数据仅在启用时附加（`_` 前缀非契约字段）；`guard_status` 自身不被 wrap（自省不熔断）；非法配置（budget≤0 等）启动 fail-fast
 
 ## [0.3.0] - 2026-10-25
 

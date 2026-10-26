@@ -16,7 +16,9 @@
         status            本体状态（只读，REQ-02 一致性判据）
         entities          可用实体短名清单（辅助智能体正确选参）
     通用工具（引擎直接提供，与本体定义无关，任意 .owl 可用）：
-        query_sparql / individuals / classes / types_of / property_values / infer
+        query_sparql / individuals / classes / types_of / property_values / infer /
+        explain_proof / predefined_queries / run_predefined_query / active_facts /
+        guard_status +（护栏启用时）全部通用工具附带预算/循环/缓存/审计防护
 
 领域包约定（domains/<name>/ 必须暴露）：
     NAME / DESCRIPTION / ONTO_FILE / create_adapter(engine, config=None) / mcp.register_tools(server, get_adapter)
@@ -61,13 +63,20 @@ from reasoner.proof import build_proof
 from domains import load_domain
 from mcp.server.mcpserver import MCPServer
 
-# 本地受控语义策略（mcp/policy.py）。注：仓库的 mcp/ 目录与 pip 的 mcp SDK 同名，
-# `from mcp import policy` 会被 SDK 包遮蔽——改为从本文件同目录加载独立模块。
+# 本地受控语义策略与调用护栏（mcp/policy.py、mcp/tool_guard.py）。注：仓库的 mcp/ 目录
+# 与 pip 的 mcp SDK 同名，`from mcp import policy` 会被 SDK 包遮蔽——改为从本文件
+# 同目录加载独立模块。
 _policy_spec = importlib.util.spec_from_file_location(
     "_mcp_policy", os.path.join(os.path.dirname(os.path.abspath(__file__)), "policy.py"))
 _policy_mod = importlib.util.module_from_spec(_policy_spec)
 _policy_spec.loader.exec_module(_policy_mod)
 policy_mod = _policy_mod
+
+_guard_spec = importlib.util.spec_from_file_location(
+    "_mcp_tool_guard", os.path.join(os.path.dirname(os.path.abspath(__file__)), "tool_guard.py"))
+_guard_mod = importlib.util.module_from_spec(_guard_spec)
+_guard_spec.loader.exec_module(_guard_mod)
+guard_mod = _guard_mod
 
 
 def build_server(get_engine, get_adapter, domain_name: str, description: str) -> MCPServer:
@@ -87,19 +96,25 @@ def build_server(get_engine, get_adapter, domain_name: str, description: str) ->
     mod = importlib.import_module(f"domains.{domain_name}.mcp")
     mod.register_tools(server, get_adapter)
 
-    # 通用工具（L1：与本体定义无关，任意 .owl 可用）；受控语义策略随领域包走
-    _register_generic_tools(server, get_engine, policy_mod.load_policy(domain_name))
+    # 通用工具（L1：与本体定义无关，任意 .owl 可用）；受控语义策略与调用护栏随领域包走
+    _register_generic_tools(server, get_engine,
+                             policy_mod.load_policy(domain_name),
+                             guard_mod.load_guard_config(domain_name))
     return server
 
 
-def _register_generic_tools(server: MCPServer, get_engine, policy=None) -> None:
+def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=None) -> None:
     """注册通用工具（引擎直接提供，与本体定义无关）。
 
     policy（SemanticPolicy | None）：非空且 enabled 时启用语义白名单门禁——类/谓词
     白名单外拒绝、query_sparql 禁用、新增预定义查询；None 或未启用时逐字节向后兼容。
+    guard（ToolGuard | None）：非空且 enabled 时为全部通用工具加装调用护栏
+    （预算熔断/循环拦截/缓存复用/审计留痕）；None 或未启用时逐字节向后兼容
+    （wrap_server_tool 关闭态原样注册，不包装、不附加 _guard 字段）。
     """
 
     active = policy is not None and policy.enabled
+    tool = guard_mod.wrap_server_tool(server, guard)  # 关闭态等价于 server.tool
 
     def _deny(reason: str, **extra) -> dict:
         return {
@@ -110,44 +125,44 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None) -> None:
             **extra,
         }
 
-    @server.tool(description="SPARQL 查询（通用）：执行 SPARQL SELECT 并返回结果行，IRI 值自动转为短名。适用于任何本体，不依赖领域语义。")
+    @tool(description="SPARQL 查询（通用）：执行 SPARQL SELECT 并返回结果行，IRI 值自动转为短名。适用于任何本体，不依赖领域语义。")
     def query_sparql(sparql: str) -> dict:
         if active:
             return _deny("已开启语义白名单，请改用 run_predefined_query", available_queries=policy.query_names())
         return {"results": get_engine().query_sparql(sparql)}
 
-    @server.tool(description="个体查询（通用）：返回指定类（短名，含其子类）的全部个体短名。如 individuals('Agent')。")
+    @tool(description="个体查询（通用）：返回指定类（短名，含其子类）的全部个体短名。如 individuals('Agent')。")
     def individuals(class_name: str) -> dict:
         if active and not policy.class_allowed(get_engine(), class_name):
             return _deny(f"类「{class_name}」不在语义白名单")
         return {"class": class_name, "individuals": get_engine().individuals(class_name)}
 
-    @server.tool(description="类层次（通用）：返回本体全部类的 name/label/direct_parent（启用白名单时仅返回白名单类及其子类）。")
+    @tool(description="类层次（通用）：返回本体全部类的 name/label/direct_parent（启用白名单时仅返回白名单类及其子类）。")
     def classes() -> dict:
         if active:
             eng = get_engine()
             return {"classes": [c for c in eng.classes() if policy.class_allowed(eng, c["name"])]}
         return {"classes": get_engine().classes()}
 
-    @server.tool(description="个体类型（通用）：返回指定个体推理后的全部类型短名（含子类推理结论）。如 types_of('dev_agent')。")
+    @tool(description="个体类型（通用）：返回指定个体推理后的全部类型短名（含子类推理结论）。如 types_of('dev_agent')。")
     def types_of(individual: str) -> dict:
         if active:
             types = get_engine().types_of(individual)
             return {"individual": individual, "types": [t for t in types if policy.class_allowed(get_engine(), t)]}
         return {"individual": individual, "types": get_engine().types_of(individual)}
 
-    @server.tool(description="属性取值（通用）：返回主体-属性 的取值列表。如 property_values('dev_agent', 'has_capability')。")
+    @tool(description="属性取值（通用）：返回主体-属性 的取值列表。如 property_values('dev_agent', 'has_capability')。")
     def property_values(subject: str, property_name: str) -> dict:
         if active and not policy.predicate_allowed(property_name):
             return _deny(f"谓词「{property_name}」不在语义白名单")
         return {"subject": subject, "property": property_name,
                 "values": get_engine().property_values(subject, property_name)}
 
-    @server.tool(description="重新推理（通用）：重新执行 OWL 2 RL 推理与 R2 规则，返回三元组数量统计与个体数。")
+    @tool(description="重新推理（通用）：重新执行 OWL 2 RL 推理与 R2 规则，返回三元组数量统计与个体数。")
     def infer() -> dict:
         return get_engine().infer()
 
-    @server.tool(description=(
+    @tool(description=(
         "结构化证明导出（通用）：给定一个结论三元组（主体/谓词/客体短名），返回机器可读的证明 JSON"
         "——{mode, rule, axioms, premises, conclusion}。mode=asserted（本体直接断言）/ derived"
         "（推理产生，含公理依据与前提事实链）/ unproven（图中不存在）。支持三类推理规则："
@@ -156,7 +171,7 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None) -> None:
     def explain_proof(subject: str, predicate: str, object: str) -> dict:
         return build_proof(get_engine(), subject, predicate, object)
 
-    @server.tool(description=(
+    @tool(description=(
         "受控预定义查询清单（通用）：启用语义白名单后，列出可安全调用的预定义查询及参数说明；"
         "未启用时返回未配置提示。"))
     def predefined_queries() -> dict:
@@ -165,7 +180,7 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None) -> None:
         return {"policy_enabled": False, "available_queries": [],
                 "message": "未配置语义白名单（access_policy.json），请配置后启用"}
 
-    @server.tool(description=(
+    @tool(description=(
         "执行受控预定义查询（通用）：按名调用预定义查询并传参，结果只含白名单内的业务概念字段。"
         "参数为短名（如任务/智能体短名）；渲染后由白名单复核。未启用策略时返回提示。"))
     def run_predefined_query(name: str, params: dict) -> dict:
@@ -178,13 +193,23 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None) -> None:
             return {"denied": True, "reason": rendered["error"]}
         return {"query": rendered["name"], "results": eng.query_sparql(rendered["sparql"])}
 
-    @server.tool(description=(
+    @tool(description=(
         "时序事实查询（通用）：返回指定属性在时刻 at（缺省=今天）的活跃事实。按主体级 "
         "validFrom/validTo 时间窗过滤（半开区间 [from,to)：at==from 活跃、at==to 失效）；"
         "无时间戳的事实永远活跃；失效事实进 inactive（失效而非删除，原始三元组仍在图中）；"
         "非法时间戳进 warnings。如 active_facts('assigned_to', '2026-10-22')。"))
     def active_facts(property: str, at: str | None = None) -> dict:
         return get_engine().facts_at(property, at)
+
+    @server.tool(description=(  # 自省工具不经护栏 wrap（查询状态不应被预算熔断）
+        "调用护栏状态（通用）：返回 ToolGuard 预算用量（used/limit/remaining）、循环阈值、"
+        "缓存命中统计与最近审计尾部（环形缓冲保留 audit_tail 条）；护栏未配置或关闭时"
+        "如实返回 enabled=false 并说明行为与无护栏版本一致，不报错。"))
+    def guard_status() -> dict:
+        if guard is None:
+            return {"enabled": False,
+                    "message": "未配置调用护栏（guard_config.json），行为与无护栏版本一致"}
+        return guard.status()
 
 
 def _make_sighup_handler(reload_fn):

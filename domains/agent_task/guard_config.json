@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "session_budget": 50,
+  "loop_threshold": 3,
+  "cache": {"enabled": true, "ttl_calls": 5},
+  "audit_tail": 100
+}
