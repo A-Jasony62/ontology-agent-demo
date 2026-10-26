@@ -25,5 +25,20 @@
       "has_capability", "requires_capability", "can_execute", "depends_on",
       "composed_of", "requires_constraint", "has_certified", "has_risk_level", "assigned_to"
     ]
+  },
+  "cq_generation": {
+    "type_taxonomy": {
+      "retrieval": "直接查询可答：『哪些 X 满足 Y？』『X 的 Z 是什么？』",
+      "derived":    "需推理才能答（属性链/传递/类型判定/合规冲突）：『哪些智能体可执行任务 T（凭能力组合而非直接指派）？』",
+      "counting":   "计数聚合：『满足条件 P 的 X 共有几个？』",
+      "negative":   "反例与边界：『哪些 X 不能……？（应为空或特定失败态）』"
+    },
+    "suggested_mix": {"retrieval": 10, "derived": 10, "counting": 5, "negative": 5},
+    "phrasing_rules": [
+      "每题一句、中文问号结尾的疑问句",
+      "题干必须用到 schema 中的类/属性术语（或明确声明待引入）",
+      "禁止『系统里有什么』这类无锚点的过宽题",
+      "禁止与已出题目同义重复"
+    ]
   }
 }
