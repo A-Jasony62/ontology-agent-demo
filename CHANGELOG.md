@@ -5,6 +5,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增管线质量门禁 `pipeline_gate`（通用 MCP 工具，`reasoner/pipeline_gate.py` + `pipeline/gates.json` + 领域包 `domains/<name>/gates_smoke.json`）：落地上游 `docs/MODELING_PIPELINE.md` §5 已约定但未实现的四道闸门——S1-S4 管线代码未动工不影响闸门作为独立工具先服务人工/Agent 建模，上游落地 s1-s4 时复用同一检查器
+  - **G1 DL 格式**：防 OWL-Full（owlready2 `is_owl_full()` + 结构断言；数据属性 inverse functional 主键陷阱拦截；缺依赖时诚实降级结构断言版）
+  - **G2 一致性**：owlrl 物化 + `Nothing`/disjointWith 矛盾检查 + 空类信息性提示（HermiT 为可选增强，未启用时 `mode=degraded` 显式标注，不冒充完整 DL 闸）
+  - **G3 物化冒烟**：领域 `gates_smoke.json` 断言集（预期谓词 min_count，如属性链产出 can_execute ≥1）；断言集为空如实 skipped
+  - **G4 SHACL**：复用 pyshacl + `pipeline/shapes/<domain>.ttl`，violations 短名化透传；行为基线（cq_regression）为挂钩位
+  - **fail-fast 过闸**：依次执行、遇 fail 即停（后续闸门标 `not_run`），`failed_at` 一眼定位卡闸位置；每闸输出 `{status, evidence, remediation}`（打回目标对齐上游文档矩阵：G1/G2 回 S2、G3 检查骨架、G4 修数据字典或 SHACL）；`gates` 参数支持单闸调试（如 `['G3']`），空列表全部 skipped（非假通过）；只读（拷贝图物化，不写回主图）
+  - **映射修正声明**：G1-G4 语义以上游文档为权威（DL格式→一致性→物化冒烟→SHACL+测试）；术语/结构层面的校验对应 `validate_tbox_draft` 的 L1-L5，不是闸门本身
+
 ## [0.3.0] - 2026-10-25
 
 ### Added
