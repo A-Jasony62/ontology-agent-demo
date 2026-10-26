@@ -11,7 +11,7 @@ adapter 的工厂"——SIGHUP 热重载后新 adapter 自动生效，无需重�
 from mcp.server.mcpserver import MCPServer
 
 from reasoner.engine import local
-from . import cq_tbox
+from . import cq_gen, cq_tbox
 
 import os
 from rdflib import Graph, Namespace, RDF, URIRef
@@ -192,3 +192,20 @@ def register_tools(server: MCPServer, get_adapter) -> None:
         "用于「LLM 抽取/生成 → SHACL 体检 → 合格才入库」的 AI 数据治理闭环。"))
     def validate_shapes() -> dict:
         return run_shacl_validation(get_adapter().engine)
+
+    @server.tool(description=(
+        "CQ 自动出题器-指南（领域）：生成宿主 LLM 出题指令（含现有 schema 术语对照、四类题型"
+        "定义与建议配比、措辞规则、输出 JSON 格式），宿主据此产出 CQ 问题数组。focus 可选，"
+        "提供全新领域描述时降级为 from_description 模式（无 schema 对照仍可用）。"
+        "补齐「出题 → guide_tbox_draft 建模 → 判卷」链的最前端。"))
+    def guide_cq_generation(focus: str | None = None) -> dict:
+        a = get_adapter()
+        return cq_gen.guide_cq_generation(a.engine, focus)
+
+    @server.tool(description=(
+        "CQ 自动出题器-质检（领域）：对宿主 LLM 产出的 CQ 问题数组做确定性质检——问题句式/"
+        "schema 术语锚点/本次输入内查重/对 008 cq_tests.json 题库查重（存在时）/规则式题型预标"
+        "（predicted_type 为建议标注）/四类题型覆盖度报告。返回 usable / revise / duplicate "
+        "三档与缺口提醒。出题质量是人把关：机器质检后仍需挑题人终审。"))
+    def validate_cqs(cqs: list[str]) -> dict:
+        return cq_gen.validate_cqs(cqs)
