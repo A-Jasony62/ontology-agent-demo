@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Ontology, EntityType, Property, Relationship } from '../data/ontology';
 import { validateOntology } from '../data/validate';
 import type { ValidationLevel } from '../data/validate';
-import { ontologyToGraphData } from '../data/toGraphData';
+import { mergeOntologyIntoGraph } from '../data/toGraphData';
 import { useAppStore } from '../store/appStore';
 import DesignerList from './DesignerList';
 import DesignerDetail from './DesignerDetail';
@@ -18,6 +18,7 @@ export default function Designer() {
   const ontology = useAppStore((s) => s.ontology);
   const setOntology = useAppStore((s) => s.setOntology);
   const setGraphData = useAppStore((s) => s.setGraphData);
+  const baseAsserted = useAppStore((s) => s.materialized.asserted);
 
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedRelId, setSelectedRelId] = useState<string | null>(null);
@@ -30,6 +31,20 @@ export default function Designer() {
   useEffect(() => {
     if (ontology && baselineRef.current === null) baselineRef.current = JSON.stringify(ontology);
   }, [ontology]);
+
+  // Esc 取消选中回到引导空态（正在做删除确认或正在输入时不打扰）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (document.querySelector('.designer-confirm, .designer-confirm-inline')) return;
+      setSelectedEntityId(null);
+      setSelectedRelId(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const errors = useMemo(() => (ontology ? validateOntology(ontology) : []), [ontology]);
 
@@ -48,12 +63,19 @@ export default function Designer() {
   const selectedRel = ontology.relationships.find((r) => r.id === selectedRelId) ?? null;
 
   const commit = (next: Ontology) => {
+    // 合并而非替换：保住断言图里的个体与实例级三元组
+    setGraphData(mergeOntologyIntoGraph(baseAsserted, ontology, next));
     setOntology(next);
-    setGraphData(ontologyToGraphData(next));
   };
 
-  const updateEntity = (id: string, patch: Partial<EntityType>) =>
+  // 改 id 时同步选中键，否则详情区会因为「按 id 查不到实体」而瞬间退回空态
+  const updateEntity = (id: string, patch: Partial<EntityType>) => {
     commit({ ...ontology, entityTypes: ontology.entityTypes.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
+    if (patch.id !== undefined && patch.id !== id) {
+      const nextId = patch.id;
+      setSelectedEntityId((cur) => (cur === id ? nextId : cur));
+    }
+  };
 
   const updateProperty = (entityId: string, idx: number, patch: Partial<Property>) =>
     commit({
@@ -153,6 +175,19 @@ export default function Designer() {
   };
 
   const toggleGroup = (k: ValidationLevel) => setCollapsedGroups((g) => ({ ...g, [k]: !g[k] }));
+
+  // 再次点击已选中的行即取消选中，回到引导空态
+  const selectEntity = (id: string) => {
+    setSelectedEntityId((cur) => (cur === id ? null : id));
+    setSelectedRelId(null);
+  };
+  const selectRel = (id: string) => {
+    setSelectedRelId((cur) => (cur === id ? null : id));
+    setSelectedEntityId(null);
+  };
+
+  // 仅当与快照有差异时「重置」才可用
+  const dirty = baselineRef.current !== null && baselineRef.current !== JSON.stringify(ontology);
   const worstLevel: ValidationLevel = errors.some((e) => e.level === 'blocker')
     ? 'blocker'
     : errors.some((e) => e.level === 'required')
@@ -174,7 +209,7 @@ export default function Designer() {
           </button>
         )}
         <div className="designer-toolbar-actions">
-          <button type="button" className="btn secondary" onClick={resetBaseline} disabled={!baselineRef.current}>
+          <button type="button" className="btn secondary" onClick={resetBaseline} disabled={!dirty}>
             重置
           </button>
         </div>
@@ -186,14 +221,8 @@ export default function Designer() {
           relationships={ontology.relationships}
           selectedEntityId={selectedEntityId}
           selectedRelId={selectedRelId}
-          onSelectEntity={(id) => {
-            setSelectedEntityId(id);
-            setSelectedRelId(null);
-          }}
-          onSelectRel={(id) => {
-            setSelectedRelId(id);
-            setSelectedEntityId(null);
-          }}
+          onSelectEntity={selectEntity}
+          onSelectRel={selectRel}
           onAddEntity={addEntity}
           onAddRel={addRel}
           onDeleteEntity={deleteEntity}

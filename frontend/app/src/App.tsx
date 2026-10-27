@@ -3,6 +3,7 @@ import { useAppStore } from './store/appStore';
 import { api } from './api/client';
 import { parseRDF } from './lib/rdf/parser';
 import GraphView from './components/GraphView';
+import GraphErrorBoundary from './components/GraphErrorBoundary';
 import Inspector from './components/Inspector';
 import SourceView from './components/SourceView';
 import ImportModal from './components/ImportModal';
@@ -164,12 +165,14 @@ export default function App() {
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 480px', minWidth: 320 }}>
-              <GraphView
-                viewMode={viewMode}
-                asserted={viewMode === 'diff' ? null : graphData ?? materialized.asserted}
-                inferred={materialized.inferred}
-                onSelect={(id) => setSelectedId(id)}
-              />
+              <GraphErrorBoundary>
+                <GraphView
+                  viewMode={viewMode}
+                  asserted={viewMode === 'diff' ? null : graphData ?? materialized.asserted}
+                  inferred={materialized.inferred}
+                  onSelect={(id) => setSelectedId(id)}
+                />
+              </GraphErrorBoundary>
             </div>
             <div style={{ flex: '0 1 300px', minWidth: 260 }}>
               <Inspector />

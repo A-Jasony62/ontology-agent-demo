@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { EntityType, Relationship } from '../data/ontology';
 
 export interface DesignerListProps {
@@ -38,6 +38,30 @@ export default function DesignerList({
   const [confirmEntityId, setConfirmEntityId] = useState<string | null>(null);
   const [confirmRelId, setConfirmRelId] = useState<string | null>(null);
 
+  // 选中行滚动进列表可视区（只滚列表自身，不动页面）
+  const entityItemRefs = useRef(new Map<string, HTMLLIElement | null>());
+  const relItemRefs = useRef(new Map<string, HTMLLIElement | null>());
+
+  const revealInList = (li: HTMLLIElement | null | undefined) => {
+    if (!li) return;
+    const ul = li.closest('ul');
+    if (!ul) return;
+    const liRect = li.getBoundingClientRect();
+    const ulRect = ul.getBoundingClientRect();
+    if (liRect.top < ulRect.top) ul.scrollTop += liRect.top - ulRect.top - 4;
+    else if (liRect.bottom > ulRect.bottom) ul.scrollTop += liRect.bottom - ulRect.bottom + 4;
+  };
+
+  useEffect(() => {
+    if (!selectedEntityId) return;
+    revealInList(entityItemRefs.current.get(selectedEntityId));
+  }, [selectedEntityId, entityTypes]);
+
+  useEffect(() => {
+    if (!selectedRelId) return;
+    revealInList(relItemRefs.current.get(selectedRelId));
+  }, [selectedRelId, relationships]);
+
   const visibleEntities = useMemo(
     () => entityTypes.filter((e) => matches(entityQ, e.name, e.id)),
     [entityTypes, entityQ],
@@ -68,6 +92,10 @@ export default function DesignerList({
             return (
               <li
                 key={e.id}
+                ref={(node) => {
+                  if (node) entityItemRefs.current.set(e.id, node);
+                  else entityItemRefs.current.delete(e.id);
+                }}
                 className={`designer-item${selected ? ' selected' : ''}`}
                 tabIndex={0}
                 onClick={() => {
@@ -149,6 +177,10 @@ export default function DesignerList({
             return (
               <li
                 key={r.id}
+                ref={(node) => {
+                  if (node) relItemRefs.current.set(r.id, node);
+                  else relItemRefs.current.delete(r.id);
+                }}
                 className={`designer-item${selected ? ' selected' : ''}`}
                 tabIndex={0}
                 onClick={() => {
