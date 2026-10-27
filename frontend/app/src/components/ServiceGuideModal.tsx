@@ -99,8 +99,9 @@ export default function ServiceGuideModal({ onClose }: Props) {
             </tbody>
           </table>
 
-          <h4>常用调用示例</h4>
-          <CopyBlock code={`# 1) 健康检查
+          <details className="guide-example">
+            <summary>常用调用示例（点击展开）</summary>
+            <CopyBlock code={`# 1) 健康检查
 curl -s http://127.0.0.1:8000/api/health
 
 # 2) 能力匹配：登录模块开发谁能做？（R1 属性链）
@@ -123,6 +124,7 @@ curl -s http://127.0.0.1:8000/api/ontology/materialized
 
 # 6) 导出物化后本体（Turtle）
 curl -s "http://127.0.0.1:8000/api/ontology/export?format=turtle" -o materialized.ttl`} />
+          </details>
 
           <h3>二、MCP Server（智能体直接调用，http://127.0.0.1:9000/mcp）</h3>
           <p className="guide-intro">
@@ -164,6 +166,7 @@ cd /Users/yangyue/projects/ontology-agent-demo
             <li><b>默认本体</b>：领域推理（capability_match / orchestrate / assign / classify / consistency / explain）可用；</li>
             <li><b>通用模式</b>：导入自定义本体后，图谱 / 物化 / SPARQL / 个体 / 类型 / 属性等通用能力仍可用，领域推理返回明确提示；</li>
             <li><b>物化</b>：推理引擎按 OWL 2 RL（owlrl）+ R2/R4 业务规则扩展三元组，原始断言 ∪ 推理新增 = 物化后本体。</li>
+            <li><b>编辑通道</b>：「在线编辑」（结构化表单，适合新手/快速调整）与「源码编辑」（RDF/XML 文本，适合精确控制公理）操作同一本体文件，保存以后保存者为准。</li>
           </ul>
         </div>
       </div>

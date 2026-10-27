@@ -29,6 +29,39 @@ body {
 .app-sub { font-size: 12px; color: #bcd3e4; }
 .health { margin-left: auto; font-size: 12px; background: #2c4d66; padding: 4px 12px; border-radius: 12px; }
 .health.ok { background: #1e6b3d; }
+/* #20：通用模式徽标与常驻横幅 */
+.mode-badge { font-size: 12px; background: #d83b01; color: #fff; padding: 3px 10px; border-radius: 12px; margin-left: 8px; }
+.mode-banner { background: #fdf1e9; border: 1px solid #f0c7a8; color: #7a3b12; padding: 10px 14px; border-radius: 8px; font-size: 13px; line-height: 1.6; margin-bottom: 14px; }
+/* #21：编辑入口锚点跳转后的短暂高亮 */
+.flash-highlight { outline: 3px solid #ff9800; outline-offset: 4px; border-radius: 10px; transition: outline-color 0.3s; }
+/* #22：校验分组 */
+.validation-groups { border: 1px solid #f0c7a8; background: #fffbf7; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.validation-guide { font-size: 12.5px; color: #7a3b12; line-height: 1.6; margin-bottom: 8px; }
+.validation-group { margin-top: 4px; }
+.validation-group summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #33455f; user-select: none; }
+.validation-group.level-blocker summary { color: #c62828; }
+.validation-group.level-required summary { color: #d83b01; }
+.validation-group.level-suggestion summary { color: #8a94a6; }
+.validation-group ul { margin: 6px 0 4px 18px; }
+.validation-group li { font-size: 12.5px; color: #44566b; line-height: 1.7; }
+.validation-group li.clickable { cursor: pointer; text-decoration: underline dotted #0b57a0; color: #0b57a0; }
+/* #23：图谱工具栏 */
+.graph-shell { display: flex; flex-direction: column; gap: 8px; }
+.graph-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.graph-search { flex: 1 1 200px; min-width: 160px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; }
+.graph-hit { font-size: 12px; color: #0b57a0; background: #eef3f8; padding: 2px 8px; border-radius: 10px; }
+.graph-zoom-btns { display: flex; gap: 4px; }
+.graph-zoom-btns button { padding: 4px 9px; font-size: 13px; }
+/* #25：导入提示 */
+.import-hint { font-size: 12.5px; color: #7a3b12; background: #fdf1e9; border: 1px solid #f0c7a8; border-radius: 6px; padding: 8px 10px; line-height: 1.6; margin: 4px 0 10px; }
+/* #26：类层次折叠 */
+.ef-class-summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 5px 6px; border: 1px solid transparent; border-radius: 6px; user-select: none; }
+.ef-class-summary:hover { background: #f4f7fb; }
+.ef-class-summary.open { border-color: #dde5f0; background: #f4f7fb; }
+.ef-class-toggle { font-size: 11px; color: #8a94a6; width: 14px; }
+.ef-class-id { font-size: 11px; color: #8a94a6; background: #f0f3f8; padding: 1px 6px; border-radius: 8px; }
+.ef-class-parent { font-size: 11px; color: #0b57a0; }
+.ef-class-filter { width: 100%; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; }
 
 .app-main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 
@@ -108,6 +141,12 @@ textarea.source-editor {
 
 /* ---------- 服务能力说明 ---------- */
 .modal.service-guide { width: min(760px, 94vw); }
+/* #24：弹窗内部滚动容器 + 表格固定表头 */
+.modal.service-guide .modal-body { max-height: calc(100vh - 170px); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.modal.service-guide .guide-table thead th { position: sticky; top: 0; z-index: 1; box-shadow: 0 1px 0 #e3e9f1; }
+.guide-example { margin: 6px 0; }
+.guide-example summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: #33455f; padding: 4px 0; }
+.guide-example[open] summary { color: #0b57a0; }
 .modal-header { display: flex; align-items: center; justify-content: space-between; }
 .modal-header h2 { font-size: 17px; color: #33455f; }
 .modal-close { background: none; border: none; font-size: 16px; cursor: pointer; color: #8a94a6; }

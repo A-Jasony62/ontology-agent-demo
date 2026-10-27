@@ -75,6 +75,9 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<Record<string, unknown>>('/api/health'),
 
+  /** 本体状态（含 mode: default | generic，供前端判断领域推理可用性） */
+  status: () => request<{ mode: 'default' | 'generic'; ontology: string; dirty: boolean; pending_changes: number }>('/api/ontology/status'),
+
   /** 领域图数据（图谱渲染） */
   ontology: () => request<GraphData>('/api/ontology'),
 

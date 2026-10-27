@@ -263,8 +263,21 @@ def materialized():
 
 @app.get("/api/ontology/source")
 def ontology_source():
-    """当前本体原始 RDF/XML 文本。"""
-    return {"filename": Path(ENGINE.onto_path).name, "content": ENGINE.source_xml()}
+    """当前本体原始 RDF/XML 文本。
+
+    本体文件缺失（如通用模式下文件被清理）时返回 404 + 结构化中文提示，
+    避免前端误判"后端未启动"。
+    """
+    try:
+        return {"filename": Path(ENGINE.onto_path).name, "content": ENGINE.source_xml()}
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"当前本体文件不存在：{ENGINE.onto_path}。"
+                "请重新加载本体（POST /api/ontology/load）或重启服务恢复默认本体。"
+            ),
+        )
 
 
 @app.get("/api/ontology/export")
@@ -407,6 +420,7 @@ def ontology_status():
     """
     return {
         "ontology": os.path.basename(engine_mod.ONTO_PATH),
+        "mode": "default" if ENGINE.onto_path == engine_mod.ONTO_PATH else "generic",
         "extensions_dir": ENGINE.extensions_dir,
         "baseline_file_hash": _baseline_hash(),
         "dirty": ADAPTER.change_count > 0,
