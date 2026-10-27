@@ -183,7 +183,7 @@ npm run build               # 产物 frontend/app/dist
 | 方法   | 路径                 | 功能                                                           |
 | ---- | ------------------ | ------------------------------------------------------------ |
 | POST | `/api/ontology/reload` | 热重载本体（新引擎构造+推理全部成功才原子替换，失败返回 400 旧状态可用） |
-| GET  | `/api/ontology/status` | 本体状态（baseline_file_hash / dirty / pending_changes / changelog / last_commit / counts） |
+| GET  | `/api/ontology/status` | 本体状态（baseline_file_hash / dirty / pending_changes / changelog / last_commit / counts；v1.5.0 起含 `mode`：default=默认本体 / generic=通用模式） |
 | DELETE | `/api/ontology/individual/{name}` | 删除个体 `?persist&cascade`（被引用时保护，cascade 连带清理反向引用） |
 | POST | `/api/ontology/revoke` | 撤销任务分配 `{task, agent, persist}` |
 | POST | `/api/ontology/import` | 批量导入任务个体（事务：任一校验失败整体拒绝）`{individuals, persist}` |

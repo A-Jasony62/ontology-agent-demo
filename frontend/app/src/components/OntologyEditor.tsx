@@ -31,6 +31,9 @@ export default function OntologyEditor({ onClose }: Props) {
   const [filename, setFilename] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // #26：类层次折叠 + 搜索过滤
+  const [expandedClass, setExpandedClass] = useState<string | null>(null);
+  const [classFilter, setClassFilter] = useState('');
 
   if (!model) {
     return (
@@ -49,40 +52,56 @@ export default function OntologyEditor({ onClose }: Props) {
   const roots = model.classes.filter((c) => !c.parent || !classIds.has(c.parent));
   const childrenOf = (pid: string) => model.classes.filter((c) => c.parent === pid && c.parent !== c.id);
 
-  const renderClassNode = (c: { id: string; label: string; parent: string | null; description: string }, depth: number) => (
-    <div key={c.id}>
-      <div className="ef-tree-row" style={{ paddingLeft: depth * 18 }}>
-        <Field label="id">
-          <input value={c.id} disabled />
-        </Field>
-        <Field label="名称">
-          <input value={c.label} onChange={(e) => commit({ ...model, classes: model.classes.map((x) => (x.id === c.id ? { ...x, label: e.target.value } : x)) })} />
-        </Field>
-        <Field label="父类">
-          <select
-            value={c.parent ?? ''}
-            onChange={(e) => commit({ ...model, classes: model.classes.map((x) => (x.id === c.id ? { ...x, parent: e.target.value || null } : x)) })}
-          >
-            <option value="">（无）</option>
-            {model.classes.filter((x) => x.id !== c.id).map((x) => <option key={x.id} value={x.id}>{x.label || x.id}</option>)}
-          </select>
-        </Field>
-        <Field label="描述">
-          <input value={c.description} onChange={(e) => commit({ ...model, classes: model.classes.map((x) => (x.id === c.id ? { ...x, description: e.target.value } : x)) })} />
-        </Field>
-        <button
-          className="secondary"
-          onClick={() => {
-            const next = { ...model, classes: model.classes.filter((x) => x.id !== c.id) };
-            commit(next);
-          }}
+  const renderClassNode = (c: { id: string; label: string; parent: string | null; description: string }, depth: number, flat = false) => {
+    const open = expandedClass === c.id;
+    return (
+      <div key={c.id} className="ef-class-node">
+        <div
+          className={`ef-class-summary ${open ? 'open' : ''}`}
+          style={{ paddingLeft: depth * 14 }}
+          onClick={() => setExpandedClass(open ? null : c.id)}
+          title="点击展开/折叠该类编辑表单"
         >
-          删除
-        </button>
+          <span className="ef-class-toggle">{open ? '▾' : '▸'}</span>
+          <b>{c.label || '(未命名)'}</b>
+          <span className="ef-class-id">{c.id}</span>
+          {c.parent && <span className="ef-class-parent">父: {c.parent}</span>}
+        </div>
+        {open && (
+          <div className="ef-tree-row" style={{ paddingLeft: depth * 14 }}>
+            <Field label="id">
+              <input value={c.id} disabled />
+            </Field>
+            <Field label="名称">
+              <input value={c.label} onChange={(e) => commit({ ...model, classes: model.classes.map((x) => (x.id === c.id ? { ...x, label: e.target.value } : x)) })} />
+            </Field>
+            <Field label="父类">
+              <select
+                value={c.parent ?? ''}
+                onChange={(e) => commit({ ...model, classes: model.classes.map((x) => (x.id === c.id ? { ...x, parent: e.target.value || null } : x)) })}
+              >
+                <option value="">（无）</option>
+                {model.classes.filter((x) => x.id !== c.id).map((x) => <option key={x.id} value={x.id}>{x.label || x.id}</option>)}
+              </select>
+            </Field>
+            <Field label="描述">
+              <input value={c.description} onChange={(e) => commit({ ...model, classes: model.classes.map((x) => (x.id === c.id ? { ...x, description: e.target.value } : x)) })} />
+            </Field>
+            <button
+              className="secondary"
+              onClick={() => {
+                const next = { ...model, classes: model.classes.filter((x) => x.id !== c.id) };
+                commit(next);
+              }}
+            >
+              删除
+            </button>
+          </div>
+        )}
+        {!flat && childrenOf(c.id).map((child) => renderClassNode(child, depth + 1))}
       </div>
-      {childrenOf(c.id).map((child) => renderClassNode(child, depth + 1))}
-    </div>
-  );
+    );
+  };
 
   const save = async (mode: 'new' | 'overwrite') => {
     if (errors.length > 0) {
@@ -156,14 +175,25 @@ export default function OntologyEditor({ onClose }: Props) {
         {/* 类层次 */}
         <div className="col">
           <h4>类层次（{model.classes.length}）</h4>
+          <input
+            className="ef-class-filter"
+            placeholder="搜索类（名称 / id）…"
+            value={classFilter}
+            onChange={(e) => setClassFilter(e.target.value)}
+          />
           <div className="ef-tree">
-            {roots.length === 0 && model.classes.map((c) => renderClassNode(c, 0))}
-            {roots.map((c) => renderClassNode(c, 0))}
+            {classFilter.trim()
+              ? model.classes
+                  .filter((c) => (c.label || '').includes(classFilter.trim()) || c.id.includes(classFilter.trim()))
+                  .map((c) => renderClassNode(c, 0, true))
+              : (roots.length === 0 ? model.classes.map((c) => renderClassNode(c, 0)) : roots.map((c) => renderClassNode(c, 0)))}
           </div>
           <button
             onClick={() => {
               const id = `NewClass${model.classes.length + 1}`;
-              commit({ ...model, classes: [...model.classes, { id, label: `新类${model.classes.length + 1}`, parent: null, description: '' }] });
+              const next = { ...model, classes: [...model.classes, { id, label: `新类${model.classes.length + 1}`, parent: null, description: '' }] };
+              commit(next);
+              setExpandedClass(id);
             }}
           >
             + 新增类
@@ -325,8 +355,10 @@ export default function OntologyEditor({ onClose }: Props) {
         </div>
       </div>
 
-      <div style={{ fontSize: 12, color: '#8a94a6', marginTop: 8 }}>
+      <div style={{ fontSize: 12, color: '#8a94a6', marginTop: 8, lineHeight: 1.7 }}>
         编辑模型由后端 rdflib 从当前本体提取（任意 OWL 可编辑）；保存后后端重建引擎并自动重推理，物化三视图与图谱随之刷新。
+        <br />
+        与「源码编辑」的关系：同一本体、两种视图——本编辑器为<b>结构化表单</b>（适合快速增删类/属性/实例），「源码编辑」为 RDF/XML 文本（适合精确控制公理）；改动均写回同一本体文件，<b>以最后保存者为准</b>；切换前请确认另一侧没有未保存的修改。
       </div>
     </div>
   );

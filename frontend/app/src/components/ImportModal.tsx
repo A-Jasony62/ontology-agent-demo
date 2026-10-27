@@ -16,6 +16,7 @@ export default function ImportModal({ onClose }: Props) {
   const setSynced = useAppStore((s) => s.setSynced);
   const setError = useAppStore((s) => s.setError);
   const setViewMode = useAppStore((s) => s.setViewMode);
+  const setOntologyMode = useAppStore((s) => s.setOntologyMode);
 
   const [dragging, setDragging] = useState(false);
   const [parsing, setParsing] = useState(false);
@@ -56,6 +57,7 @@ export default function ImportModal({ onClose }: Props) {
     try {
       const res = await api.loadOntology(fileRef.current);
       setSynced(true);
+      setOntologyMode('generic'); // #20：同步后立即刷新通用模式横幅/徽标
       const mat = await api.materialized();
       setMaterialized(mat);
       const src = await api.source();
@@ -72,6 +74,9 @@ export default function ImportModal({ onClose }: Props) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>导入 OWL 知识</h3>
+        <div className="import-hint">
+          导入自定义本体后将进入<b>通用模式</b>：领域推理（能力匹配 / 编排 / 合规检测）不可用，图谱 / 物化 / SPARQL 不受影响；重启服务可恢复默认本体。
+        </div>
         <div
           className={`drop-zone ${dragging ? 'dragging' : ''}`}
           onClick={() => inputRef.current?.click()}

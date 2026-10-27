@@ -27,6 +27,8 @@ interface AppState {
   error: string | null;
   // 图谱选中项（节点 id 或 "edge|{edgeId}"）
   selectedId: string | null;
+  // 本体模式（#20：default=默认本体，generic=通用模式；null=未知）
+  ontologyMode: 'default' | 'generic' | null;
 
   setBackendOk: (ok: boolean, info?: Record<string, unknown>) => void;
   setOntology: (o: Ontology | null) => void;
@@ -37,6 +39,7 @@ interface AppState {
   setSynced: (v: boolean) => void;
   setError: (e: string | null) => void;
   setSelectedId: (id: string | null) => void;
+  setOntologyMode: (m: 'default' | 'generic' | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -51,6 +54,7 @@ export const useAppStore = create<AppState>((set) => ({
   syncedToBackend: false,
   error: null,
   selectedId: null,
+  ontologyMode: null,
 
   setBackendOk: (ok, info) => set({ backendOk: ok, backendInfo: info ?? null }),
   setOntology: (o) => set({ ontology: o }),
@@ -61,4 +65,5 @@ export const useAppStore = create<AppState>((set) => ({
   setSynced: (v) => set({ syncedToBackend: v }),
   setError: (e) => set({ error: e }),
   setSelectedId: (id) => set({ selectedId: id }),
+  setOntologyMode: (m) => set({ ontologyMode: m }),
 }));

@@ -216,3 +216,38 @@ def test_download_path_traversal():
     """路径穿越被拒绝：basename 化后文件不存在 → 404。"""
     r = client.get("/api/ontology/download?name=../../etc/passwd")
     assert r.status_code == 404
+
+
+# ---------- issue 修复回归（2026-10-27 走查报告） ----------
+
+def test_source_missing_file_returns_404(monkeypatch):
+    """#19：本体文件缺失时 /api/ontology/source 返回 404 结构化中文，而非裸 500。"""
+    import reasoner.engine as engine_mod
+
+    class _FakeEngine:
+        onto_path = "/tmp/definitely-not-exists.owl"
+
+        def source_xml(self):
+            raise FileNotFoundError()
+
+    monkeypatch.setattr(M, "ENGINE", _FakeEngine())
+    r = client.get("/api/ontology/source")
+    assert r.status_code == 404
+    assert "当前本体文件不存在" in r.json()["detail"]
+
+
+def test_status_mode_default():
+    """#20：默认本体时 status.mode = default（领域推理可用）。"""
+    r = client.get("/api/ontology/status")
+    assert r.status_code == 200
+    assert r.json()["mode"] == "default"
+
+
+def test_status_mode_generic_after_save_new(restore_engine):
+    """#20：另存新本体后 status.mode = generic（领域推理不可用），前端据此提示。"""
+    model = client.get("/api/ontology/edit-model").json()
+    r = client.post("/api/ontology/save", json={"model": model, "mode": "new"})
+    assert r.status_code == 200
+    st = client.get("/api/ontology/status")
+    assert st.status_code == 200
+    assert st.json()["mode"] == "generic"

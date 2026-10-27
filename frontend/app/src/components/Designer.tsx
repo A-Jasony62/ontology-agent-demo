@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Ontology, EntityType, Property, Relationship } from '../data/ontology';
 import { validateOntology } from '../data/validate';
+import type { ValidationLevel } from '../data/validate';
 import { ontologyToGraphData } from '../data/toGraphData';
 import { useAppStore } from '../store/appStore';
 
@@ -28,6 +29,15 @@ export default function Designer() {
   const selectedEntity = ontology.entityTypes.find((e) => e.id === selectedEntityId) ?? null;
   const selectedRel = ontology.relationships.find((r) => r.id === selectedRelId) ?? null;
 
+  // #22：按严重度分组折叠（blocker/required 默认展开，suggestion 折叠），点击可定位实体
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({ suggestion: false });
+  const groupLabels: { key: ValidationLevel; label: string }[] = [
+    { key: 'blocker', label: '阻断（必须修复）' },
+    { key: 'required', label: '必改（命名/标识/合法性）' },
+    { key: 'suggestion', label: '建议（历史遗留可优化，不影响使用）' },
+  ];
+  const toggleGroup = (k: ValidationLevel) => setCollapsedGroups((g) => ({ ...g, [k]: !g[k] }));
+
   const commit = (next: Ontology) => {
     setOntology(next);
     setGraphData(ontologyToGraphData(next));
@@ -53,10 +63,38 @@ export default function Designer() {
   };
 
   return (
-    <div className="panel">
+    <div className="panel" id="designer-root">
       <h2>可视化编辑器</h2>
       {errors.length > 0 && (
-        <div className="error-banner">{errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}</div>
+        <div className="validation-groups">
+          <div className="validation-guide">
+            校验发现 {errors.length} 项提示（部分为默认本体历史遗留的命名/描述可优化项，不影响当前使用）；点击条目可定位到对应实体。
+          </div>
+          {groupLabels.map(({ key, label }) => {
+            const list = errors.filter((e) => e.level === key);
+            if (list.length === 0) return null;
+            const open = !collapsedGroups[key];
+            return (
+              <details key={key} className={`validation-group level-${key}`} open={open}>
+                <summary onClick={(e) => { e.preventDefault(); toggleGroup(key); }}>
+                  {open ? '▾' : '▸'} {label}（{list.length}）
+                </summary>
+                <ul>
+                  {list.map((it, i) => (
+                    <li
+                      key={i}
+                      className={it.targetId ? 'clickable' : ''}
+                      onClick={() => { if (it.targetId) { setSelectedEntityId(it.targetId); (document.getElementById('designer-root') as HTMLElement | null)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }}
+                      title={it.targetId ? '点击定位到该实体' : undefined}
+                    >
+                      {it.message}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            );
+          })}
+        </div>
       )}
 
       <div className="editor-grid">
