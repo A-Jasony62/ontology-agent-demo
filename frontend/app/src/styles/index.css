@@ -1,20 +1,77 @@
+/* ============================================================
+   项目样式设计规范 · 设计 Token（单一事实源）
+   所有组件只引用本表，不在业务代码 / 散落 CSS 写死颜色与间距。
+   详见 docs/STYLE-SPEC.md
+   ============================================================ */
 :root {
+  /* 色彩：基础 */
   --bg: #f3f5f7;
   --panel: #ffffff;
+  --panel-2: #f8fafc;
   --border: #dde5f0;
+  --border-strong: #c3d0e0;
   --text: #1a1a2e;
   --muted: #5a6b7f;
+  --heading: #33455f;
+  --surface-hover: #eef2f8;
+
+  /* 色彩：品牌与语义 */
   --primary: #0078d4;
+  --primary-hover: #0069bd;
   --primary-soft: #eaf1fb;
+  --link: #0b57a0;
   --ok: #107c10;
-  --warn: #d83b01;
-  --inferred: #2f8f6b;
-  /* Designer UI 改版（S1）：语义色补充 */
-  --danger: #d83b01;
   --success: #107c10;
+  --success-bg: #eaf6ee;
+  --success-border: #b7ddc3;
+  --warn: #d83b01;
   --warning: #b06000;
+  --danger: #d83b01;
+  --danger-hover: #b8330a;
   --danger-bg: #fdf3f3;
   --danger-border: #e3b0b0;
+  --inferred: #2f8f6b;
+
+  /* 间距尺度（4px 基） */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 10px;
+  --radius-pill: 14px;
+  --radius-full: 999px;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, .06);
+  --shadow: 0 1px 3px rgba(0, 0, 0, .12);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .12);
+
+  /* 字号 */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-sm2: 12.5px;
+  --fs-md: 13px;
+  --fs-lg: 14px;
+  --fs-xl: 15px;
+  --fs-title: 16px;
+  --fs-page: 18px;
+
+  /* 控件尺寸 */
+  --control-h: 30px;
+  --control-h-lg: 32px;
+  --control-h-sm: 28px;
+
+  /* 焦点环 / 动效 */
+  --ring: 0 0 0 3px rgba(0, 120, 212, .15);
+  --ring-danger: 0 0 0 3px rgba(216, 59, 1, .14);
+  --t-base: .15s ease;
+  --t-fast: .12s ease;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -153,12 +210,64 @@ textarea.source-editor {
   border-radius: 8px; padding: 8px 12px; font-size: 13px; white-space: pre-wrap;
 }
 
-.editor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
-.editor-grid .col { border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+/* 在线编辑：四列各自独立垂直滚动，整页高度受控，不再无限拉长。
+   要点：容器必须有「确定高度」+ 行高受约束(minmax(0,1fr))，列才会产生滚动条；
+        否则行高 = 内容高，列被容器 overflow:hidden 裁掉且无法滚动。 */
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 12px;
+  height: calc(100vh - 250px);
+  min-height: 320px;
+  overflow: hidden;
+}
+.editor-grid .col {
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+  min-height: 0; min-width: 0;
+  display: flex; flex-direction: column;
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain;
+  /* 常驻可见滚动条：否则 macOS 覆盖式滚动条让用户误以为下方没有内容。
+     注意：Chrome 下若同时声明 scrollbar-width/color，会忽略 ::-webkit-scrollbar 规则，
+     导致只剩 2px 极细覆盖条 —— 故此处只使用 webkit 伪元素方案。 */
+}
+.editor-grid .col::-webkit-scrollbar { width: 10px; height: 10px; }
+.editor-grid .col::-webkit-scrollbar-track { background: #f4f7fb; border-radius: 6px; }
+.editor-grid .col::-webkit-scrollbar-thumb {
+  background: #c3cdd8; border-radius: 6px; border: 2px solid #f4f7fb;
+  background-clip: content-box;
+}
+.editor-grid .col::-webkit-scrollbar-thumb:hover { background: #a3b2c4; background-clip: content-box; }
+/* 列头：标题 + 「全部展开/折叠」吸顶常驻 */
+.ef-col-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  position: sticky; top: 0; background: #fff; z-index: 2; padding-bottom: 2px; margin-bottom: 8px;
+}
+.editor-grid .ef-col-head h4 { font-size: 14px; color: #33455f; margin: 0; }
+.ef-col-toggle { font-size: 11px; padding: 0 6px; height: 22px; flex: 0 0 auto; }
 .editor-grid h4 { font-size: 14px; margin-bottom: 8px; color: #33455f; }
 .editor-grid ul { list-style: none; }
 .editor-grid li { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 13px; }
 .editor-grid li button { margin-left: auto; }
+
+/* 折叠卡片：摘要行 + 展开后的字段体 */
+.ef-row-toggle {
+  flex: 0 0 auto; width: 18px; height: 18px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--muted); font-size: 11px;
+  cursor: pointer; border-radius: 4px; line-height: 1;
+}
+.ef-row-toggle:hover { background: #eef2f8; color: var(--text); }
+.ef-row-summary {
+  flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px;
+  overflow: hidden; cursor: pointer; font-size: 13px; color: var(--text);
+}
+.ef-row-summary b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ef-row-id { font-size: 11px; color: #8a94a6; background: #f0f3f8; padding: 1px 6px; border-radius: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ef-row-meta { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ef-row-body { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.ef-row.open { border-color: var(--border-strong); }
 
 /* ---------- 服务能力说明 ---------- */
 .modal.service-guide { width: min(760px, 94vw); }
@@ -194,32 +303,63 @@ textarea.source-editor {
 .guide-notes { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; color: #44566b; line-height: 1.8; }
 
 /* ---------- 在线编辑本体定义（OntologyEditor） ---------- */
-.editor-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.editor-toolbar h2 { font-size: 16px; color: #33455f; margin: 0; }
-.editor-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.dirty-dot { width: 9px; height: 9px; border-radius: 50%; background: #c3cdd8; display: inline-block; }
-.dirty-dot.on { background: #d83b01; box-shadow: 0 0 0 2px rgba(216,59,1,.2); }
-.ef-filename { width: 170px; padding: 5px 8px; font-size: 12.5px; border: 1px solid var(--border); border-radius: 6px; }
-button.danger { background: #d83b01; color: #fff; }
-button.danger:disabled { opacity: .55; }
-.download-link { display: inline-block; padding: 5px 10px; text-decoration: none; font-size: 12.5px; }
-.notice-banner { background: #eaf6ee; border: 1px solid #b7ddc3; color: #1a6b34; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
-.ef-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
-.ef-tree { max-height: 520px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-.ef-tree-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; border: 1px solid #eef1f5; border-radius: 6px; padding: 6px; }
-.ef-tree-row .ef-field { flex: 1 1 90px; }
-.ef-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: #8a94a6; min-width: 60px; }
-.ef-field input, .ef-field select { font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; width: 100%; box-sizing: border-box; }
-.ef-row { border: 1px solid #eef1f5; border-radius: 6px; padding: 6px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
-.ef-row-head { display: flex; gap: 6px; align-items: center; }
-.ef-row-head input { flex: 1; font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; }
-.ef-row-sub { display: flex; gap: 8px; }
-.ef-row-sub .ef-field { flex: 1; }
-.ef-chars { display: flex; gap: 10px; flex-wrap: wrap; }
-.ef-chars label { display: inline-flex; align-items: center; gap: 3px; }
-.ef-assertions { display: flex; flex-direction: column; gap: 4px; }
-.ef-assertion { display: flex; gap: 6px; align-items: center; }
-.ef-assertion select, .ef-assertion input { flex: 1; font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; }
+/* 与可视化编辑共用同一套设计 token（见 :root）与 .btn / .field 原语 */
+.editor-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-3); }
+.editor-toolbar h2 { font-size: var(--fs-xl); color: var(--heading); margin: 0; }
+.editor-actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+
+.dirty-dot { width: 9px; height: 9px; border-radius: var(--radius-full); background: #c3cdd8; display: inline-block; }
+.dirty-dot.on { background: var(--danger); box-shadow: 0 0 0 2px var(--danger-bg); }
+
+.ef-filename { width: 170px; height: var(--control-h); padding: 0 9px; font-size: var(--fs-sm2); border: 1px solid var(--border); border-radius: var(--radius-sm); box-sizing: border-box; }
+.ef-filename:focus { outline: none; border-color: var(--primary); box-shadow: var(--ring); }
+
+a.download-link { display: inline-flex; align-items: center; height: var(--control-h-lg); padding: 0 12px; text-decoration: none; font-size: var(--fs-sm2); color: var(--primary); border: 1px solid var(--border); border-radius: var(--radius-sm); box-sizing: border-box; }
+a.download-link:hover { background: var(--primary-soft); border-color: var(--border-strong); }
+
+.notice-banner { background: var(--success-bg); border: 1px solid var(--success-border); color: var(--success); border-radius: var(--radius); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-md); }
+
+/* 列宽统一由 .editor-grid 定义，此处不再重复覆盖 */
+
+/* 列内「+ 新增 X」按钮：吸底常驻，长列表滚动时始终可操作 */
+.editor-grid .col > button {
+  display: inline-flex; align-items: center; height: var(--control-h-lg);
+  padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: #fff; color: var(--primary); font-size: var(--fs-md); cursor: pointer;
+  transition: background var(--t-base), border-color var(--t-base);
+  margin-top: var(--sp-2); position: sticky; bottom: 0; z-index: 1;
+}
+.editor-grid .col > button:hover { background: var(--primary-soft); border-color: var(--border-strong); }
+
+.ef-class-filter { width: 100%; margin-bottom: var(--sp-2); padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; position: sticky; top: 30px; background: #fff; z-index: 1; }
+
+.ef-tree { display: flex; flex-direction: column; gap: var(--sp-2); }
+/* 类编辑行：2 列网格，字段成对排布，删除按钮规整靠右，消除换行错位 */
+/* minmax(0,1fr) 允许列收缩到内容以下，避免内容把列撑出横向滚动 */
+.ef-tree-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2) var(--sp-3); align-items: end; border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-3); background: var(--panel-2); }
+.ef-tree-row .field { min-width: 0; }
+.ef-tree-row .field input, .ef-tree-row .field select { min-width: 0; }
+.ef-tree-row > .btn { grid-column: 1 / -1; justify-self: end; flex: 0 0 auto; }
+
+/* 卡片：宽度可收缩到 0，避免内容把列撑出横向滚动条 */
+.ef-row { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); background: var(--panel); min-width: 0; }
+/* 头部：摘要行（可点击折叠）+ 常驻删除按钮；输入框已移入 .ef-row-body */
+.ef-row-head { display: flex; gap: var(--sp-1); align-items: center; min-width: 0; }
+.ef-row-head .btn { flex: 0 0 auto; height: var(--control-h); align-self: center; }
+.ef-row-head input { flex: 1 1 0; min-width: 0; height: var(--control-h); padding: 0 9px; font-size: var(--fs-sm2); border: 1px solid var(--border); border-radius: var(--radius-sm); box-sizing: border-box; }
+.ef-row-sub { display: flex; gap: var(--sp-3); min-width: 0; }
+.ef-row-sub .field { flex: 1 1 0; min-width: 0; }
+.ef-row-sub .field select { min-width: 0; }
+
+.ef-chars { display: flex; gap: var(--sp-3); flex-wrap: wrap; margin-top: 2px; }
+.ef-chars label { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-xs); color: var(--muted); }
+
+.ef-assertions { display: flex; flex-direction: column; gap: var(--sp-1); margin-top: 2px; min-width: 0; }
+.ef-assertion { display: flex; gap: var(--sp-2); align-items: center; min-width: 0; }
+.ef-assertion select, .ef-assertion input { flex: 1 1 0; min-width: 0; height: var(--control-h); padding: 0 9px; font-size: var(--fs-sm2); border: 1px solid var(--border); border-radius: var(--radius-sm); box-sizing: border-box; }
+/* 断言行 ✕ 按钮：与输入框同高，且不参与收缩 */
+.ef-assertion .btn { flex: 0 0 auto; height: var(--control-h); align-self: center; }
+.ef-assertion select:focus, .ef-assertion input:focus { outline: none; border-color: var(--primary); box-shadow: var(--ring); }
 
 /* ============================================================
    Designer UI 改版 · S1 基础层（设计 token + 按钮 + 表单字段）
@@ -231,22 +371,22 @@ button.danger:disabled { opacity: .55; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  height: 32px;
+  gap: var(--sp-2);
+  height: var(--control-h-lg);
   padding: 0 14px;
   border: 1px solid transparent;
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-md);
   line-height: 1;
   font-weight: 500;
   color: #fff;
   background: var(--primary);
   cursor: pointer;
-  transition: background .15s ease, box-shadow .15s ease, transform .05s ease, opacity .15s ease;
+  transition: background var(--t-base), box-shadow var(--t-base), transform var(--t-fast), opacity var(--t-base);
   user-select: none;
   white-space: nowrap;
 }
-.btn:hover { background: #0069bd; }
+.btn:hover { background: var(--primary-hover); }
 .btn:active { transform: translateY(1px); }
 .btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
@@ -256,7 +396,7 @@ button.danger:disabled { opacity: .55; }
   color: var(--primary);
   border-color: var(--border);
 }
-.btn.secondary:hover { background: var(--primary-soft); border-color: #c7d8ee; }
+.btn.secondary:hover { background: var(--primary-soft); border-color: var(--border-strong); }
 .btn.secondary:disabled { background: #fff; }
 
 .btn.danger {
@@ -264,47 +404,47 @@ button.danger:disabled { opacity: .55; }
   color: var(--danger);
   border-color: var(--danger-border);
 }
-.btn.danger:hover { background: var(--danger-bg); }
+.btn.danger:hover { background: var(--danger-bg); border-color: var(--danger); }
 
 .btn.ghost {
   background: transparent;
   color: var(--muted);
   border-color: transparent;
-  height: 28px;
+  height: var(--control-h-sm);
   padding: 0 10px;
 }
-.btn.ghost:hover { background: #eef2f8; color: var(--text); }
+.btn.ghost:hover { background: var(--surface-hover); color: var(--text); }
 .btn.ghost.danger-text { color: var(--danger); }
 .btn.ghost.danger-text:hover { background: var(--danger-bg); color: var(--danger); }
 
 .btn.icon {
-  width: 28px;
-  height: 28px;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
   padding: 0;
   background: transparent;
   color: var(--muted);
   border-color: transparent;
 }
-.btn.icon:hover { background: #eef2f8; color: var(--text); }
+.btn.icon:hover { background: var(--surface-hover); color: var(--text); }
 
 /* ---- 表单字段 ---- */
-.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
 .field > label,
-.field-label { font-size: 11px; color: var(--muted); font-weight: 500; }
+.field-label { font-size: var(--fs-xs); color: var(--muted); font-weight: 500; }
 .field-label .req { color: var(--danger); margin-left: 2px; }
 
 .field input,
 .field select,
 .field textarea {
   width: 100%;
-  height: 30px;
+  height: var(--control-h);
   padding: 0 9px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text);
   background: #fff;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  transition: border-color .15s ease, box-shadow .15s ease;
+  border-radius: var(--radius-sm);
+  transition: border-color var(--t-base), box-shadow var(--t-base);
   box-sizing: border-box;
 }
 .field textarea { height: auto; min-height: 60px; padding: 6px 9px; resize: vertical; line-height: 1.5; }
@@ -318,26 +458,26 @@ button.danger:disabled { opacity: .55; }
 }
 .field input:hover,
 .field select:hover,
-.field textarea:hover { border-color: #c3d0e0; }
+.field textarea:hover { border-color: var(--border-strong); }
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(0,120,212,.15);
+  box-shadow: var(--ring);
 }
 .field input:disabled,
 .field select:disabled,
 .field textarea:disabled { background: #f4f6f9; color: #9aa7b6; cursor: not-allowed; }
 
-.field-hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
-.field-error { font-size: 11px; color: var(--danger); line-height: 1.5; }
+.field-hint { font-size: var(--fs-xs); color: var(--muted); line-height: 1.5; }
+.field-error { font-size: var(--fs-xs); color: var(--danger); line-height: 1.5; }
 .field.has-error input,
 .field.has-error select,
 .field.has-error textarea { border-color: var(--danger); }
 .field.has-error input:focus,
 .field.has-error select:focus,
-.field.has-error textarea:focus { box-shadow: 0 0 0 3px rgba(216,59,1,.14); }
+.field.has-error textarea:focus { box-shadow: var(--ring-danger); }
 
 /* ============================================================
    Designer UI 改版 · S2 布局（列表 ⇄ 详情 + 工具栏 + 校验面板）

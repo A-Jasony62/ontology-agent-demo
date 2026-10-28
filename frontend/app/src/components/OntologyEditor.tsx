@@ -13,10 +13,44 @@ interface Props {
 /** 通用小部件：带标签的输入行 */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="ef-field">
-      <span>{label}</span>
+    <label className="field">
+      <span className="field-label">{label}</span>
       {children}
     </label>
+  );
+}
+
+/** 折叠卡片：默认只显示摘要行（含常驻删除按钮），点击展开编辑字段。
+    目的：单列内容过长时（实例列实测 4162px）大幅缩短列表、保持可操作。 */
+function CollapsibleCard({
+  open, onToggle, summary, meta, onDelete, children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  summary: React.ReactNode;
+  meta?: React.ReactNode;
+  onDelete: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`ef-row ${open ? 'open' : ''}`}>
+      <div className="ef-row-head">
+        <button
+          className="ef-row-toggle"
+          onClick={onToggle}
+          aria-expanded={open}
+          title={open ? '折叠' : '展开编辑'}
+        >
+          {open ? '▾' : '▸'}
+        </button>
+        <span className="ef-row-summary" onClick={onToggle} title="点击展开/折叠">
+          {summary}
+          {meta && <span className="ef-row-meta">{meta}</span>}
+        </span>
+        <button className="btn ghost danger-text" onClick={onDelete} title="删除">删</button>
+      </div>
+      {open && <div className="ef-row-body">{children}</div>}
+    </div>
   );
 }
 
@@ -34,6 +68,18 @@ export default function OntologyEditor({ onClose }: Props) {
   // #26：类层次折叠 + 搜索过滤
   const [expandedClass, setExpandedClass] = useState<string | null>(null);
   const [classFilter, setClassFilter] = useState('');
+  // 属性/实例卡片折叠：默认全部折叠，避免单列内容过长（实测实例列可达 4162px）。
+  // 以「下标」而非 id 为键 —— 改 id 时 id 会变，用 id 做键会导致输入一个字符就折叠。
+  const [openCards, setOpenCards] = useState<Record<string, boolean>>({});
+  const isCardOpen = (ns: string, idx: number) => !!openCards[`${ns}:${idx}`];
+  const toggleCard = (ns: string, idx: number) =>
+    setOpenCards((prev) => ({ ...prev, [`${ns}:${idx}`]: !prev[`${ns}:${idx}`] }));
+  const setAllCards = (ns: string, count: number, open: boolean) =>
+    setOpenCards((prev) => {
+      const next = { ...prev };
+      for (let i = 0; i < count; i += 1) next[`${ns}:${i}`] = open;
+      return next;
+    });
 
   if (!model) {
     return (
@@ -88,7 +134,7 @@ export default function OntologyEditor({ onClose }: Props) {
               <input value={c.description} onChange={(e) => commit({ ...model, classes: model.classes.map((x) => (x.id === c.id ? { ...x, description: e.target.value } : x)) })} />
             </Field>
             <button
-              className="secondary"
+              className="btn ghost danger-text"
               onClick={() => {
                 const next = { ...model, classes: model.classes.filter((x) => x.id !== c.id) };
                 commit(next);
@@ -137,9 +183,9 @@ export default function OntologyEditor({ onClose }: Props) {
         <h2>在线编辑本体定义 · {model.ontologyName || '—'}</h2>
         <div className="editor-actions">
           <span className={`dirty-dot ${dirty ? 'on' : ''}`} title={dirty ? '有未保存修改' : '已保存'} />
-          <button className="secondary" onClick={undo} disabled={history.length === 0}>撤销</button>
-          <button className="secondary" onClick={redo} disabled={future.length === 0}>重做</button>
-          <button className="secondary" onClick={() => resetTo(model)} disabled={!dirty}>重置</button>
+          <button className="btn secondary" onClick={undo} disabled={history.length === 0}>撤销</button>
+          <button className="btn secondary" onClick={redo} disabled={future.length === 0}>重做</button>
+          <button className="btn secondary" onClick={() => resetTo(model)} disabled={!dirty}>重置</button>
           <input
             className="ef-filename"
             placeholder="保存文件名"
@@ -147,18 +193,18 @@ export default function OntologyEditor({ onClose }: Props) {
             onChange={(e) => setFilename(e.target.value)}
             title="另存文件名（默认 本体名-edited.owl）"
           />
-          <button onClick={() => save('new')} disabled={saving || loading}>
+          <button className="btn" onClick={() => save('new')} disabled={saving || loading}>
             {saving ? '保存中…' : '另存为新本体'}
           </button>
-          <button className="danger" onClick={() => save('overwrite')} disabled={saving || loading}>
+          <button className="btn danger" onClick={() => save('overwrite')} disabled={saving || loading}>
             覆盖当前本体
           </button>
           {savedFilename && (
-            <a className="secondary download-link" href={api.downloadUrl(savedFilename)} download={savedFilename}>
+            <a className="download-link" href={api.downloadUrl(savedFilename)} download={savedFilename}>
               下载 {savedFilename}
             </a>
           )}
-          <button className="secondary" onClick={() => { closeEditor(); onClose(); }}>关闭</button>
+          <button className="btn secondary" onClick={() => { closeEditor(); onClose(); }}>关闭</button>
         </div>
       </div>
 
@@ -174,7 +220,9 @@ export default function OntologyEditor({ onClose }: Props) {
       <div className="editor-grid ef-grid">
         {/* 类层次 */}
         <div className="col">
-          <h4>类层次（{model.classes.length}）</h4>
+          <div className="ef-col-head">
+            <h4>类层次（{model.classes.length}）</h4>
+          </div>
           <input
             className="ef-class-filter"
             placeholder="搜索类（名称 / id）…"
@@ -202,13 +250,31 @@ export default function OntologyEditor({ onClose }: Props) {
 
         {/* 对象属性 */}
         <div className="col">
-          <h4>对象属性（{model.objectProps.length}）</h4>
-          {model.objectProps.map((p) => (
-            <div key={p.id} className="ef-row">
-              <div className="ef-row-head">
-                <input value={p.id} onChange={(e) => commit({ ...model, objectProps: model.objectProps.map((x) => (x.id === p.id ? { ...x, id: e.target.value } : x)) })} />
-                <input value={p.label} placeholder="标签" onChange={(e) => commit({ ...model, objectProps: model.objectProps.map((x) => (x.id === p.id ? { ...x, label: e.target.value } : x)) })} />
-                <button className="secondary" onClick={() => commit({ ...model, objectProps: model.objectProps.filter((x) => x.id !== p.id) })}>删</button>
+          <div className="ef-col-head">
+            <h4>对象属性（{model.objectProps.length}）</h4>
+            <button
+              className="btn ghost ef-col-toggle"
+              onClick={() => setAllCards('obj', model.objectProps.length, !(model.objectProps.length > 0 && model.objectProps.every((_, i) => isCardOpen('obj', i))))}
+            >
+              {model.objectProps.length > 0 && model.objectProps.every((_, i) => isCardOpen('obj', i)) ? '全部折叠' : '全部展开'}
+            </button>
+          </div>
+          {model.objectProps.map((p, i) => (
+            <CollapsibleCard
+              key={`obj-${i}`}
+              open={isCardOpen('obj', i)}
+              onToggle={() => toggleCard('obj', i)}
+              summary={<><b>{p.label || '(未命名)'}</b><span className="ef-row-id">{p.id}</span></>}
+              meta={[p.domain, p.range].filter(Boolean).join(' → ') || undefined}
+              onDelete={() => commit({ ...model, objectProps: model.objectProps.filter((x) => x.id !== p.id) })}
+            >
+              <div className="ef-row-sub">
+                <Field label="id">
+                  <input value={p.id} onChange={(e) => commit({ ...model, objectProps: model.objectProps.map((x) => (x.id === p.id ? { ...x, id: e.target.value } : x)) })} />
+                </Field>
+                <Field label="标签">
+                  <input value={p.label} placeholder="标签" onChange={(e) => commit({ ...model, objectProps: model.objectProps.map((x) => (x.id === p.id ? { ...x, label: e.target.value } : x)) })} />
+                </Field>
               </div>
               <div className="ef-row-sub">
                 <Field label="domain">
@@ -226,7 +292,7 @@ export default function OntologyEditor({ onClose }: Props) {
               </div>
               <div className="ef-chars">
                 {PROPERTY_CHARACTERISTICS.map((c) => (
-                  <label key={c} style={{ fontSize: 11 }}>
+                  <label key={c}>
                     <input
                       type="checkbox"
                       checked={p.characteristics.includes(c)}
@@ -241,12 +307,14 @@ export default function OntologyEditor({ onClose }: Props) {
                   </label>
                 ))}
               </div>
-            </div>
+            </CollapsibleCard>
           ))}
           <button
             onClick={() => {
               const id = `newProp${model.objectProps.length + 1}`;
               commit({ ...model, objectProps: [...model.objectProps, { id, label: '', domain: null, range: null, characteristics: [] }] });
+              setAllCards('obj', model.objectProps.length + 1, false);
+              toggleCard('obj', model.objectProps.length);
             }}
           >
             + 新增对象属性
@@ -255,13 +323,31 @@ export default function OntologyEditor({ onClose }: Props) {
 
         {/* 数据属性 */}
         <div className="col">
-          <h4>数据属性（{model.dataProps.length}）</h4>
-          {model.dataProps.map((p) => (
-            <div key={p.id} className="ef-row">
-              <div className="ef-row-head">
-                <input value={p.id} onChange={(e) => commit({ ...model, dataProps: model.dataProps.map((x) => (x.id === p.id ? { ...x, id: e.target.value } : x)) })} />
-                <input value={p.label} placeholder="标签" onChange={(e) => commit({ ...model, dataProps: model.dataProps.map((x) => (x.id === p.id ? { ...x, label: e.target.value } : x)) })} />
-                <button className="secondary" onClick={() => commit({ ...model, dataProps: model.dataProps.filter((x) => x.id !== p.id) })}>删</button>
+          <div className="ef-col-head">
+            <h4>数据属性（{model.dataProps.length}）</h4>
+            <button
+              className="btn ghost ef-col-toggle"
+              onClick={() => setAllCards('data', model.dataProps.length, !(model.dataProps.length > 0 && model.dataProps.every((_, i) => isCardOpen('data', i))))}
+            >
+              {model.dataProps.length > 0 && model.dataProps.every((_, i) => isCardOpen('data', i)) ? '全部折叠' : '全部展开'}
+            </button>
+          </div>
+          {model.dataProps.map((p, i) => (
+            <CollapsibleCard
+              key={`data-${i}`}
+              open={isCardOpen('data', i)}
+              onToggle={() => toggleCard('data', i)}
+              summary={<><b>{p.label || '(未命名)'}</b><span className="ef-row-id">{p.id}</span></>}
+              meta={p.range || undefined}
+              onDelete={() => commit({ ...model, dataProps: model.dataProps.filter((x) => x.id !== p.id) })}
+            >
+              <div className="ef-row-sub">
+                <Field label="id">
+                  <input value={p.id} onChange={(e) => commit({ ...model, dataProps: model.dataProps.map((x) => (x.id === p.id ? { ...x, id: e.target.value } : x)) })} />
+                </Field>
+                <Field label="标签">
+                  <input value={p.label} placeholder="标签" onChange={(e) => commit({ ...model, dataProps: model.dataProps.map((x) => (x.id === p.id ? { ...x, label: e.target.value } : x)) })} />
+                </Field>
               </div>
               <div className="ef-row-sub">
                 <Field label="domain">
@@ -277,12 +363,14 @@ export default function OntologyEditor({ onClose }: Props) {
                   </select>
                 </Field>
               </div>
-            </div>
+            </CollapsibleCard>
           ))}
           <button
             onClick={() => {
               const id = `newData${model.dataProps.length + 1}`;
               commit({ ...model, dataProps: [...model.dataProps, { id, label: '', domain: null, range: 'string' }] });
+              setAllCards('data', model.dataProps.length + 1, false);
+              toggleCard('data', model.dataProps.length);
             }}
           >
             + 新增数据属性
@@ -291,13 +379,31 @@ export default function OntologyEditor({ onClose }: Props) {
 
         {/* 实例 */}
         <div className="col">
-          <h4>实例（{model.individuals.length}）</h4>
-          {model.individuals.map((ind) => (
-            <div key={ind.id} className="ef-row">
-              <div className="ef-row-head">
-                <input value={ind.id} onChange={(e) => commit({ ...model, individuals: model.individuals.map((x) => (x.id === ind.id ? { ...x, id: e.target.value } : x)) })} />
-                <input value={ind.label} placeholder="标签" onChange={(e) => commit({ ...model, individuals: model.individuals.map((x) => (x.id === ind.id ? { ...x, label: e.target.value } : x)) })} />
-                <button className="secondary" onClick={() => commit({ ...model, individuals: model.individuals.filter((x) => x.id !== ind.id) })}>删</button>
+          <div className="ef-col-head">
+            <h4>实例（{model.individuals.length}）</h4>
+            <button
+              className="btn ghost ef-col-toggle"
+              onClick={() => setAllCards('ind', model.individuals.length, !(model.individuals.length > 0 && model.individuals.every((_, i) => isCardOpen('ind', i))))}
+            >
+              {model.individuals.length > 0 && model.individuals.every((_, i) => isCardOpen('ind', i)) ? '全部折叠' : '全部展开'}
+            </button>
+          </div>
+          {model.individuals.map((ind, i) => (
+            <CollapsibleCard
+              key={`ind-${i}`}
+              open={isCardOpen('ind', i)}
+              onToggle={() => toggleCard('ind', i)}
+              summary={<><b>{ind.label || '(未命名)'}</b><span className="ef-row-id">{ind.id}</span></>}
+              meta={ind.assertions.length > 0 ? `${ind.assertions.length} 项断言` : undefined}
+              onDelete={() => commit({ ...model, individuals: model.individuals.filter((x) => x.id !== ind.id) })}
+            >
+              <div className="ef-row-sub">
+                <Field label="id">
+                  <input value={ind.id} onChange={(e) => commit({ ...model, individuals: model.individuals.map((x) => (x.id === ind.id ? { ...x, id: e.target.value } : x)) })} />
+                </Field>
+                <Field label="标签">
+                  <input value={ind.label} placeholder="标签" onChange={(e) => commit({ ...model, individuals: model.individuals.map((x) => (x.id === ind.id ? { ...x, label: e.target.value } : x)) })} />
+                </Field>
               </div>
               <Field label="类型断言">
                 <select
@@ -332,7 +438,7 @@ export default function OntologyEditor({ onClose }: Props) {
                 ))}
                 {ind.assertions.length === 0 && <div style={{ fontSize: 12, color: '#8a94a6' }}>无属性断言</div>}
                 <button
-                  className="secondary"
+                  className="btn secondary"
                   onClick={() => {
                     const firstObj = model.objectProps[0]?.id ?? '';
                     const assertion: EditModelAssertion = { prop: firstObj, value: '', isObject: !!firstObj };
@@ -342,12 +448,14 @@ export default function OntologyEditor({ onClose }: Props) {
                   + 断言
                 </button>
               </div>
-            </div>
+            </CollapsibleCard>
           ))}
           <button
             onClick={() => {
               const id = `ind${model.individuals.length + 1}`;
               commit({ ...model, individuals: [...model.individuals, { id, label: `个体${model.individuals.length + 1}`, types: [], assertions: [] }] });
+              setAllCards('ind', model.individuals.length + 1, false);
+              toggleCard('ind', model.individuals.length);
             }}
           >
             + 新增实例
@@ -398,7 +506,7 @@ function AssertionRow({
       ) : (
         <input value={a.value} placeholder="字面量取值" onChange={(e) => onChange({ ...a, value: e.target.value })} />
       )}
-      <button className="secondary" onClick={onRemove}>✕</button>
+      <button className="btn ghost danger-text" onClick={onRemove}>✕</button>
     </div>
   );
 }
