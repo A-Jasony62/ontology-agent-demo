@@ -16,7 +16,7 @@
 
 **在线编辑边界**：编辑模型仅覆盖类 / 属性 / 个体子集——restriction、属性链等复杂公理不进入编辑模型；「覆盖当前本体」会重建 OWL 文件，含复杂公理的原文件覆盖后不保留（另存可保留）。校验规则刻意宽松（开放世界假设）：id 仅要求非空且无 IRI 危险字符，中文/下划线短名合法，对象断言可指向未声明实体。
 
-**安全边界**：`/api/upload` 是单机演示功能，接收任意 `.owl` 写入 `data/uploads/`，**无鉴权、无输入隔离——请勿将服务直接暴露公网**；如需公网部署请自行加鉴权与上传校验。
+**安全边界**：`/api/ontology/import` 与 `/api/ontology/load`（导入/加载自定义本体）是单机演示功能，**无鉴权、无输入隔离——请勿将服务直接暴露公网**；如需公网部署请自行加鉴权与导入校验。
 
 ## 3.2 MCP Server（智能体接入）
 
@@ -77,7 +77,7 @@ docker compose up -d mcp
 | `guide_cq_generation(focus?)` | **CQ 自动出题-指南**：生成宿主 LLM 出题指令（四类题型配比、措辞规则、JSON 格式）；focus 提供全新领域时降级 from_description 模式 |
 | `validate_cqs(cqs)` | **CQ 自动出题-质检**：确定性质检（零 LLM 依赖）——句式/schema 术语锚点/查重/题型预标/覆盖度报告，返回 usable/revise/duplicate |
 
-**受控语义接口（v0.2.3+）**：配置领域包 `access_policy.json` 语义白名单后，MCP 只暴露允许的类/谓词（含子类继承），白名单外查询被拒并返回诚实提示；策略激活时 `query_sparql` 禁用。
+**受控语义接口（v1.3.0）**：配置领域包 `access_policy.json` 语义白名单后，MCP 只暴露允许的类/谓词（含子类继承），白名单外查询被拒并返回诚实提示；策略激活时 `query_sparql` 禁用。
 
 **Agent 调用护栏（tool_guard，Unreleased）**：为通用工具注册管道统一加装四道防线（默认关闭，`guard_config.json` 置 `enabled: true` 启用）：
 
