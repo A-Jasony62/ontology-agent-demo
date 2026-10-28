@@ -3,6 +3,31 @@
 本项目所有重要变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)（SemVer）。
 
+## [0.5.0] - 2026-10-28
+
+本轮为「编辑器工程化」里程碑：可视化编辑器完成列表-详情式重设计，在线编辑器接入统一样式规范并对齐体验，二者共享同一套设计 token。
+
+### Added
+
+- **可视化编辑器重设计（S1–S4）**：从旧三栏布局重构为「工具栏 + 左实体列表(1/3) + 右详情(2/3) + 底部校验面板」的工作区
+  - 实体列表：搜索过滤、行点击选中/取消、删除二次确认、`scrollIntoView` 定位
+  - 详情面板：按实体类型动态渲染字段表单；标识属性 UI 层互斥并移除多选报错校验
+  - 校验面板：错误按严重度（阻断 / 必改 / 建议）分组，点击条目定位到对应实体
+  - 提交模型：每次编辑合并进当前断言图，`baselineRef` 快照 + dirty 判定驱动「重置」（放弃未保存改动）
+- **项目级样式规范 `docs/STYLE-SPEC.md`**：设计 token（色彩 / 间距 / 圆角 / 字号 / 控件尺寸 / 焦点环 / 动效）作为单一事实源；`.btn`（主/次/危险/文字/危险文字/图标）、`.field`、`.panel`/卡片/分组/徽标/校验分组等组件原语；强制流程「新组件先查 token、优先复用原语、禁止内联写死样式」
+- **在线编辑器接入样式规范**：工具栏按钮接入 `.btn` 体系（另存=主色、覆盖=危险红、撤销/重做/重置/关闭=次按钮），类层次树与属性/实例卡片统一为白卡片 + 圆角 + 一致间距
+- **在线编辑器卡片默认折叠**：对象属性 / 数据属性 / 实例卡片默认折叠为摘要行（含常驻「删」按钮），列头提供一键「全部展开/折叠」；折叠态以数组下标为键，避免改 id 时卡片意外收起（顺带修复三栏 `key=p.id` 导致输入失焦的既有 bug）
+
+### Fixed
+
+- **可视化编辑器 P0 白屏**：清空实体 ID → `Error: Can not create element with invalid string ID ''` 使整页崩溃；新增空 ID 过滤 + `GraphErrorBoundary`，图渲染失败只降级为面板而非整页白屏
+- **可视化编辑器图谱混乱**：根源① `ontologyToGraphData` 整体替换丢失个体与实例级边；根源② 每次 commit 全量 remove + `fcose(randomize:true)` + `fit` 导致重排。改为 `mergeOntologyIntoGraph` 增量合并（类节点以模型为准、保留个体与实例边、仅移除本版删除的关系边）+ 首帧才 `randomize:true` + 新节点落在视口内最空位置
+- **在线编辑器布局**：三栏无法垂直滚动、下方内容被裁 → `.editor-grid` 改为确定高度（`height: calc(100vh - 250px)` + `grid-auto-rows: minmax(0,1fr)`），`.col` 才拿到确定高度使 `overflow-y:auto` 生效；「删」按钮需横向滚动才可见 → `input/select` 加 `flex:1 1 0; min-width:0` 允许收缩、删按钮 `flex:0 0 auto` 永不收缩；滚动条不可见 → 移除 `scrollbar-width/color`（Chrome 下会忽略 `::-webkit-scrollbar`），仅保留 webkit 伪元素方案（2px → 12px 常驻可见）。实例列内容 4162px → 789px，对象属性 1843px → 573px
+
+### Changed
+
+- 设计 token 正式沉淀进 `src/styles/index.css` 的 `:root`，`.btn` / `.field` 改为消费 token（值不变、来源集中），可视化编辑与在线编辑共享同一套底层
+
 ## [0.4.0] - 2026-10-27
 
 ### Fixed
