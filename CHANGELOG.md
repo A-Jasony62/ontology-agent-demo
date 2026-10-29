@@ -12,6 +12,11 @@
 - **运行态配置层 `config/`**：`domain.example.json` 随仓库分发（模板），本地 `domain.json` 入 `.gitignore`；优先级 CLI > 环境变量（`ONTOLOGY_DOMAINS_ROOT` / `ONTOLOGY_DOMAIN`）> 配置文件 > 模板回退 > 内置默认，字段级合并，逐字段记录来源便于排查
 - **`ontologyctl domain install --from <路径>`**：把任意路径的领域包装进运行态 root；先复制到 `.staging` 校验（契约符号、`ONTO_FILE` 必须解析在包内）再落盘，`--force` 覆盖前备份到 `backups/`，并写 `root/.installed/<name>.json`（来源 / 时间 / 内容哈希）
 - **领域适配器契约 `reasoner/protocol.py`**：把出口层长期鸭子调用的 7 个方法显式声明为 `AdapterProtocol`，`/api/health` 返回 `contract` 字段，缺少方法时对应端点返回 501 并附缺失清单（原为运行期 500）
+- **契约强制校验（P1-1）**：`load_domain` 加载即校验，缺方法直接 `DomainContractError`；豁免只有一条——用 `CAPABILITIES` 显式声明"我提供哪些"。三态语义：未声明 = 要求全量；声明 = 清单内必须实现；`()` = 合法的零能力领域。`AdapterBase` 提供 `explain` / `graph_export` 默认实现
+- **`reasoner/abox.py`（P1-2）**：ABox 事务（删除 / 撤回 / 批量导入 / 增量落盘 / 变更记录）从领域适配器上移到框架；业务判断（哪些谓词算引用）由领域以 `reference_predicates` 注入
+- **`reasoner/cq/`（P1-3）**：CQ 出题、质检与 TBox 草稿 L1-L5 校验上移为通用工位；框架自带领域中立 `default_prompts.json`，领域 `cq_prompts.json` 与其深合并（只写差异即可）
+- **`reasoner/plugin.py`（P1-4）**：`PluginContext` 门面——引擎 / 包目录 / 配置 / 原语 / ABox 工厂 / 日志一次性交付。加载器优先 `create_adapter_ctx(ctx)`，退回旧的 `create_adapter(engine, config)`
+- **`examples/_minimal/`（P1-5）**：零复制验收物——1 个 owl + 4 行 config + 一个只继承不实现的适配器，证明新领域不必复制 `agent_task` 任何一行
 - **`domains` 加载器支持任意路径**：`spec_from_file_location` + `submodule_search_locations` 构造合法包，包内相对导入保持有效；同路径复用避免类身份分裂，`reload=True` 整包重建且失败回滚
 
 ### Changed
@@ -20,7 +25,9 @@
 - **默认领域不再写死**：`api/main.py` 与 `mcp/mcp_server.py` 均按配置解析默认领域（`--domain` / `--domains-root` 可覆盖），REST API 换领域无需改源码；`reasoner.engine.ONTO_PATH` 改为 import 时按配置解析（包内 `config.json` 的 `onto_file` → 包内唯一 `*.owl` → 历史路径兜底）
 - **`mcp/policy.py`、`mcp/tool_guard.py`、`reasoner/pipeline_gate.py` 的领域目录改为按配置解析**，不再硬编码仓库下的 `domains/`
 - **SHACL 形状文件定位**：`examples/agent_task/mcp.py` 由"上溯三级"改为 环境变量 `ONTOLOGY_SHAPES_FILE` → 包内 `SHAPES_FILE` 声明 → 包内 `shapes/*.ttl` → 历史布局，领域包安装到任意 root 后仍可用
-- 后端测试 178 → 236 项；`tests/conftest.py` 以进程内别名兼容旧导入，未安装时自动以临时副本运行（干净检出可直接跑，且不写脏 `examples/`）
+- 后端测试 178 → 236 → 290 项；`tests/conftest.py` 以进程内别名兼容旧导入，未安装时自动以临时副本运行（干净检出可直接跑，且不写脏 `examples/`）
+- **领域包的导入面收敛**：只 import `reasoner.plugin`（门面）与 `reasoner.cq`，不再 import `reasoner.engine` / `reasoner.semantic` / `reasoner.derivation` / `reasoner.abox`；由 `tests/test_plugin.py` 的 ast 扫描断言守住
+- `agent_task` 适配器从 1391 行降到 591 行（ABox 205 行、CQ 502 行上移框架后）
 
 ### BREAKING CHANGE
 

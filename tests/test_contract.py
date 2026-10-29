@@ -11,7 +11,7 @@ import os
 import sys
 
 import pytest
-from rdflib import Graph, Literal, Namespace, RDF, RDFS, URIRef
+from rdflib import Graph, Literal, Namespace, OWL, RDF, RDFS, URIRef
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -254,6 +254,23 @@ def test_default_graph_export_marks_inferred_edges():
     a.engine.g.add((_NS.g1, _NS.uses, _NS.w1))          # 只在 g、不在 raw → 推理产物
     inferred = [e for e in a.graph_export()["edges"] if e["source"] == "g1"]
     assert inferred and inferred[0]["inferred"] is True
+
+
+def test_default_graph_export_ignores_materialization_noise():
+    """owlrl 物化会补两类噪音：自反的 X ⊑ X / owl:Nothing ⊑ X，以及 sameAs 自反边。
+
+    两者都不是领域知识，出图时必须滤掉——这是 examples/_minimal 用真实
+    小本体跑出来的（假图单元测试看不出来），在此钉死防回归。
+    """
+    a = _minimal_adapter()
+    a.engine.g.add((_NS.Widget, RDFS.subClassOf, _NS.Widget))     # 自反
+    a.engine.g.add((_NS.Nothing, RDFS.subClassOf, _NS.Widget))    # Nothing ⊑ X
+    a.engine.g.add((_NS.w1, OWL.sameAs, _NS.w1))                  # sameAs 自反
+
+    out = a.graph_export()
+    assert [c["name"] for c in out["classes"]] == ["Widget", "Gadget"]
+    assert [(e["source"], e["target"], e["property"]) for e in out["edges"]] == [
+        ("w1", "g1", "uses")]
 
 
 def test_adapter_can_override_defaults():

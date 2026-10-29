@@ -198,9 +198,12 @@ def default_graph_export(adapter: Any) -> dict:
         cls = NS[tc]
         classes.append({"name": tc, "label": engine.label(cls), "parent": None})
         for sub in sorted(engine.g.subjects(RDFS.subClassOf, cls), key=str):
-            if _local(sub) in hidden:
+            name = _local(sub)
+            # 推理物化会补出自反边（X ⊑ X）与 owl:Nothing ⊑ X，两者都不是「子类」，
+            # 拿假图做单元测试看不出来——是 _minimal 这类真实小本体把它们照出来的
+            if name in hidden or name == tc or name == "Nothing":
                 continue
-            classes.append({"name": _local(sub), "label": engine.label(sub), "parent": tc})
+            classes.append({"name": name, "label": engine.label(sub), "parent": tc})
 
     individuals: list[dict] = []
     for group, class_key in (cfg.get("graph_groups", {}) or {}).items():
@@ -233,6 +236,8 @@ _META_PREDICATES = frozenset({
     OWL.equivalentClass, OWL.equivalentProperty, OWL.disjointWith,
     OWL.intersectionOf, OWL.unionOf, OWL.complementOf, OWL.oneOf,
     OWL.someValuesFrom, OWL.allValuesFrom, OWL.hasValue, OWL.onProperty,
+    # owlrl 会给每个个体补 sameAs 自反边——它是推理产物，不是业务关系
+    OWL.sameAs, OWL.differentFrom,
 })
 
 

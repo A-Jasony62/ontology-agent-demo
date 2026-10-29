@@ -33,6 +33,7 @@ from pathlib import Path
 from reasoner.abox import AboxStore
 from reasoner.derivation import expand
 from reasoner.engine import local, resolve_ns
+from reasoner.protocol import AdapterBase
 from reasoner.semantic import (
     SemanticConfig,
     load_derivation_config,
@@ -41,6 +42,7 @@ from reasoner.semantic import (
 
 __all__ = [
     "PluginContext",
+    "AdapterBase",
     # 转发：领域常用、但不想为此 import 四个不同内部模块
     "AboxStore",
     "SemanticConfig",
