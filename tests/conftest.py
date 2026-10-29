@@ -25,11 +25,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config import load_config                        # noqa: E402
-from domains import (                                 # noqa: E402
-    DomainNotFoundError,
-    load_domain_module,
-    refresh_config,
-)
 
 DEFAULT_EXAMPLE = "agent_task"
 _ALIAS_INFO = "(未初始化)"
@@ -56,9 +51,25 @@ def _prepare_runtime() -> str:
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
     os.environ["ONTOLOGY_DOMAINS_ROOT"] = str(root)
+    from domains import refresh_config      # 局部导入：见下方"为什么必须最早执行"
+
     refresh_config()                       # 清掉进程内配置缓存，重新按 env 解析
     _RUNTIME_ROOT = str(root)
     return f"未安装 → 临时副本（{root}）"
+
+
+# 为什么必须在这里（模块级）执行，而不是放进 pytest_configure：
+#   `reasoner/__init__.py` 导出 ONTO_PATH，而 ONTO_PATH 在 *import 时* 按运行态
+#   配置固化。conftest 一旦 import domains，后续任何测试模块 import 都会连带
+#   固化引擎引导路径——那时再准备临时运行态就晚了（CI 干净检出会去读
+#   domains/agent_task/*，而那里是空的）。所以先把环境准备好再碰框架。
+#   只依赖 stdlib + config（config 不 import reasoner），顺序安全。
+_PREPARED = _prepare_runtime()
+
+from domains import (                                 # noqa: E402
+    DomainNotFoundError,
+    load_domain_module,
+)
 
 
 def _alias_domain_for_tests() -> str:
@@ -80,8 +91,7 @@ def pytest_configure(config):
     if shapes.is_file():
         os.environ.setdefault("ONTOLOGY_SHAPES_FILE", str(shapes))
 
-    state = _prepare_runtime()
-    _ALIAS_INFO = f"{state} | {_alias_domain_for_tests()}"
+    _ALIAS_INFO = f"{_PREPARED} | {_alias_domain_for_tests()}"
     # 引擎的引导路径在 import 时按配置解析；此处只做一致性校验提示
     import reasoner.engine as engine_mod
 

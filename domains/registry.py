@@ -44,7 +44,11 @@ from pathlib import Path
 from types import ModuleType
 
 from config import ConfigError, DomainConfig, load_config
-from reasoner.protocol import undeclared_missing
+
+# 注意：本模块属于**引导链**——`reasoner/__init__.py` 会在 import 期固化
+# ONTO_PATH，而 ONTO_PATH 又依赖本模块的 default_onto_path()。若在此处顶层
+# import reasoner.*，就形成 import 期循环，且 CI 干净检出（domains/ 为空）时
+# 引擎引导路径会先被算成空路径再被缓存。契约校验不是热路径，延迟导入即可。
 
 __all__ = [
     "DomainContractError",
@@ -220,6 +224,8 @@ def load_domain(name: str, engine, config=None, *, settings: DomainConfig | None
 
 
 def _validate_adapter(name: str, adapter) -> None:
+    from reasoner.protocol import undeclared_missing   # 延迟导入：见文件头说明
+
     missing = undeclared_missing(adapter)
     if not missing:
         return

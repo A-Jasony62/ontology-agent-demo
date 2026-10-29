@@ -16,10 +16,10 @@
 """
 
 import os
-from datetime import datetime
 
-from rdflib import Graph, Literal, URIRef, RDF, RDFS
+from rdflib import URIRef, RDF, RDFS
 
+from reasoner.abox import AboxStore
 from reasoner.engine import local
 from reasoner.semantic import SemanticConfig, load_domain_config, load_derivation_config
 from reasoner.derivation import expand
@@ -81,9 +81,17 @@ class AgentTaskAdapter:
         self.r2_asserted = set()                # {(agent_iri, task_iri)} R2 产生的 can_execute
         self.last_derivation = []               # 最近一次查询的推导链
         self.last_query_kind = None
-        self.change_count = 0                   # 未提交变更数（persist 成功后归零）
-        self.changelog = []                     # 变更记录（时间/操作/详情）
-        self.last_commit = None                 # 最近一次落盘路径
+
+        # ABox 事务（框架能力，P1-2）：变更计数 / changelog / 增量落盘。
+        # 业务谓词在这里声明——框架不猜哪些属性算"引用"。
+        self.abox = AboxStore(
+            engine,
+            resolve_predicate=self._p,
+            reference_predicates=(
+                "composed_of", "depends_on", "assigned_to", "requires_capability",
+            ),
+            assignment_predicate="assigned_to",
+        )
 
         g, cfg = engine.g, config
         # 快照断言（直接）边，用于图谱展示与编排（排除推理闭包，避免图过密）
@@ -180,53 +188,22 @@ class AgentTaskAdapter:
             }
         return None
 
-    # ---------------- 变更记录与增量持久化（001 批次） ----------------
+    # ---------------- 变更记录（框架 AboxStore 的状态，对外保持一致） ----------------
 
-    def _note_change(self, op: str, detail: dict, persisted: dict | None) -> None:
-        """记录变更（dirty 计数 + changelog）；persist 成功后 pending 计数归零。"""
-        self.change_count += 1
-        self.changelog.append({
-            "time": datetime.now().isoformat(timespec="seconds"),
-            "op": op,
-            "operator": "ontology-service",   # 真实操作者（智能体 ID 等）由 002 批次接入
-            "detail": detail,
-        })
-        if persisted:
-            self.change_count = 0
-            self.last_commit = persisted["path"]
+    @property
+    def change_count(self) -> int:
+        """未提交变更数（persist 成功后归零）。"""
+        return self.abox.change_count
 
-    def _write_increment(self, op: str, name: str, triples: list, is_del: bool = False) -> dict:
-        """将断言级增量写为扩展 ttl 文件（原子：临时文件 + rename）。
+    @property
+    def changelog(self) -> list[dict]:
+        """变更记录（时间/操作/详情）。"""
+        return self.abox.changelog
 
-        序列化源 = 本次操作的断言参数（不依赖图 diff，天然排除推理物化噪音）；
-        文件名 = YYYYMMDD-HHMMSS-<op>-<name>.ttl（时间戳命名，按文件名排序即时间序）；
-        is_del=True 时文件名为 ...-del-...（003 批次 REQ-09：删除增量，reload 时移除其中三元组）。
-        写入失败不影响内存状态（已生效变更回退为"未持久化"并抛错）。
-        """
-        exts = self.engine.extensions_dir
-        if not exts:
-            raise ValueError("persist=true 需要引擎启用 extensions/ 扩展目录（本体同目录建 extensions/）")
-        os.makedirs(exts, exist_ok=True)
-        g = Graph()
-        for s, p, o in triples:
-            subj = URIRef(s) if s.startswith("http") else self.NS[s]
-            pred = p if isinstance(p, URIRef) else self._p(p)
-            if isinstance(o, Literal):
-                obj = o
-            elif isinstance(o, (int, bool)):
-                obj = Literal(o)
-            elif isinstance(o, str) and o.startswith("http"):
-                obj = URIRef(o)
-            else:
-                obj = self.NS[o]
-            g.add((subj, pred, obj))
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        marker = "-del-" if is_del else "-"
-        path = os.path.join(exts, f"{ts}{marker}{op}-{name}.ttl")
-        tmp = path + ".tmp"
-        g.serialize(destination=tmp, format="turtle")
-        os.replace(tmp, path)                # 原子替换（无半文件）
-        return {"path": path, "triples": len(triples)}
+    @property
+    def last_commit(self) -> str | None:
+        """最近一次落盘路径。"""
+        return self.abox.last_commit
 
     # ---------------- 查询服务 ----------------
 
@@ -344,11 +321,11 @@ class AgentTaskAdapter:
 
         persisted = None
         if persist:
-            persisted = self._write_increment(
+            persisted = self.abox.write_increment(
                 "assign", task_name,
                 [(task_name, self.c.resolve("assigned_to"), agent_name)],
             )
-        self._note_change("assign", {"task": task_name, "agent": agent_name}, persisted)
+        self.abox.note_change("assign", {"task": task_name, "agent": agent_name}, persisted)
 
         conflict = self._compliance_conflict(task, agent)
         self.last_query_kind = "assign"
@@ -435,8 +412,8 @@ class AgentTaskAdapter:
                 triples.append((local(iri), self.c.resolve("requires_capability"), c))
             for c in constraints:
                 triples.append((local(iri), self.c.resolve("requires_constraint"), c))
-            persisted = self._write_increment("classify", local(iri), triples)
-        self._note_change("classify", {
+            persisted = self.abox.write_increment("classify", local(iri), triples)
+        self.abox.note_change("classify", {
             "individual": local(iri),
             "capabilities": capabilities,
             "constraints": constraints,
@@ -475,85 +452,56 @@ class AgentTaskAdapter:
             "derivation": self.last_derivation,
         }
 
-    # ---------------- CRUD（003 批次 REQ-09：删除 / 撤回 / 批量导入） ----------------
+    # ---------------- CRUD（003 批次 REQ-09；P1-2 起事务本体在 reasoner/abox.py） ----------------
 
     def delete_individual(self, name: str, persist: bool = False, cascade: bool = False) -> dict:
-        """删除个体（A-box 断言：类型/属性/数据）。
+        """删除个体：引用保护 + 连带清理 + 重推理 + 可选落盘（框架 AboxStore 执行）。
 
-        引用保护：被 composed_of / depends_on / assigned_to / requires_capability
-        引用时拒绝删除（除非 cascade=true 连带清理反向引用边）。
-        推理入边（required_by / can_execute 等）**始终**一并删除——否则 reparse 时
-        推理器会借这些边重新推出已删断言（实测证实）；持久化快照仅含 A-box 断言
-        （reload 后推理边随个体消失自然清理）。
-        删除后重推理，r2_asserted 中相关项清理；persist=true 写删除增量（-del- 文件）。
+        领域只提供两件事：哪些谓词算"引用"（构造时声明）、删完要重放什么规则
+        （R2）。其余（快照、内存/raw 同步、推理边清理、-del- 增量）都是框架职责。
         """
+        return self.abox.delete(
+            name,
+            persist=persist,
+            cascade=cascade,
+            on_deleted=self._forget_individual,
+            after_reparse=self._apply_r2,
+        )
+
+    def _forget_individual(self, name: str) -> None:
+        """删除后清理领域自身缓存（分配缓存 / R2 断言集合）。"""
         iri = self.NS[name]
-        if (iri, None, None) not in self.engine.g:
-            raise ValueError(f"个体不存在: {name}")
-
-        biz = [self._p("composed_of"), self._p("depends_on"),
-               self._p("assigned_to"), self._p("requires_capability")]
-        ref = [(local(s), local(p)) for s, p, o in self.engine.g if o == iri and p in biz]
-        if ref and not cascade:
-            raise ValueError(
-                f"「{name}」被 {len(ref)} 处引用不可删除（来源: {ref[:3]}；如需连带清理请用 cascade=true）")
-
-        # 快照（持久化用，仅 A-box 断言）：出边 + cascade 业务反边
-        del_triples: list = []
-        for s, p, o in list(self.engine.g.triples((iri, None, None))):
-            del_triples.append((local(s), p, local(o) if isinstance(o, URIRef) else o))
-        if cascade:
-            for s, p, o in list(self.engine.g.triples((None, None, iri))):
-                if p in biz:
-                    del_triples.append((local(s), p, local(o)))
-
-        # 内存删除：出边 + 全部入边（业务边与推理边，g 与 raw 同步；raw 无对应时 no-op）
-        for s, p, o in list(self.engine.g.triples((iri, None, None))):
-            self.engine.g.remove((s, p, o))
-            self.engine.raw.remove((s, p, o))
-        for s, p, o in list(self.engine.g.triples((None, None, iri))):
-            self.engine.g.remove((s, p, o))
-            self.engine.raw.remove((s, p, o))
-
         self.assignments.pop(name, None)
         self.r2_asserted = {(a, t) for (a, t) in self.r2_asserted if a != iri and t != iri}
 
-        self.engine.reparse()               # 推理边（can_execute 等）随个体消失自动清理
-        self._apply_r2()
-
-        persisted = None
-        if persist:
-            persisted = self._write_increment("del", name, del_triples, is_del=True)
-        self._note_change("delete", {"individual": name, "cascade": cascade}, persisted)
-        return {"individual": name, "deleted": True, "removed_triples": len(del_triples),
-                "cascade": cascade, "persisted": persisted}
-
     def revoke(self, task: str, agent: str, persist: bool = False) -> dict:
-        """撤回分配：移除 assigned_to 图边（001 批次起权威源为图断言）并更新兼容缓存。"""
-        t, a = self.NS[task], self.NS[agent]
-        if (t, self._p("assigned_to"), a) not in self.engine.g:
-            raise ValueError(f"不存在分配: {task} → {agent}")
-        self.engine.remove_triples(task, self.c.resolve("assigned_to"), agent)
-        self.assignments.pop(task, None)
-
-        persisted = None
-        if persist:
-            persisted = self._write_increment("revoke", task,
-                                              [(task, self.c.resolve("assigned_to"), agent)],
-                                              is_del=True)
-        self._note_change("revoke", {"task": task, "agent": agent}, persisted)
-        return {"task": task, "agent": agent, "revoked": True, "persisted": persisted}
+        """撤回分配：移除 assigned_to 图边（权威源为图断言）并更新兼容缓存。"""
+        return self.abox.revoke(
+            task, agent,
+            persist=persist,
+            on_revoked=lambda t: self.assignments.pop(t, None),
+        )
 
     def import_individuals(self, individuals: list[dict], persist: bool = False) -> dict:
         """批量导入任务个体（事务：先全量校验 → 全部通过才应用 → 一次推理 → 一次落盘）。
 
-        校验：name 必填且不冲突、能力/约束引用存在、risk_level 合法。
-        任一失败整体拒绝，不产生半套数据。
-        空列表视为无操作：不 reparse、不写 changelog、不置 dirty（issue #7）。
+        事务边界由框架保证；`_plan_import` 只回答"这批数据合法吗、该写哪些断言"。
         """
-        if not individuals:
-            return {"imported": 0, "individuals": [], "persisted": None}
-        plan: list[tuple] = []                       # (iri, caps, cons, risk)
+        return self.abox.import_individuals(
+            individuals,
+            planner=self._plan_import,
+            persist=persist,
+            after_reparse=self._apply_r2,
+        )
+
+    def _plan_import(self, individuals: list[dict]) -> tuple[list[tuple], list[str]]:
+        """导入校验 + 断言生成（领域规则：能力/约束必须是本体里存在的类）。
+
+        返回 (三元组清单, 个体名清单)；任一校验失败抛 ValueError，整批中止。
+        同一份三元组清单既用于写图也用于落盘，杜绝"内存写了、文件漏了"。
+        """
+        triples: list[tuple] = []
+        names: list[str] = []
         for item in individuals:
             name = (item.get("name") or "").strip()
             if not name:
@@ -572,36 +520,16 @@ class AgentTaskAdapter:
             for c in cons:
                 if (self.NS[c], RDFS.subClassOf, self.NS[self.c.constraint_class]) not in self.engine.g:
                     raise ValueError(f"未知约束类: {c}（事务中止）")
-            plan.append((iri, caps, cons, risk))
 
-        # 全部校验通过 → 应用断言
-        all_triples: list = []
-        for iri, caps, cons, risk in plan:
-            self.engine.add_type(local(iri), self.c.simple_task_class)
-            all_triples.append((local(iri), RDF.type, self.c.simple_task_class))
+            names.append(name)
+            triples.append((name, RDF.type, self.c.simple_task_class))
             if risk:
-                self.engine.add_literal(local(iri), self.c.resolve("has_risk_level"), risk)
-                all_triples.append((local(iri), self.c.resolve("has_risk_level"), int(risk)))
+                triples.append((name, self.c.resolve("has_risk_level"), int(risk)))
             for c in caps:
-                self.engine.add_triple(local(iri), self.c.resolve("requires_capability"), c)
-                all_triples.append((local(iri), self.c.resolve("requires_capability"), c))
+                triples.append((name, self.c.resolve("requires_capability"), c))
             for c in cons:
-                self.engine.add_triple(local(iri), self.c.resolve("requires_constraint"), c)
-                all_triples.append((local(iri), self.c.resolve("requires_constraint"), c))
-
-        self.engine.reparse()               # 一次推理（事务整体）
-        self._apply_r2()
-
-        persisted = None
-        if persist:
-            persisted = self._write_increment("import", f"batch{len(plan)}", all_triples)
-        self._note_change("import", {"count": len(plan), "names": [local(i) for i, *_ in plan]},
-                          persisted)
-        return {
-            "imported": len(plan),
-            "individuals": [local(i) for i, *_ in plan],
-            "persisted": persisted,
-        }
+                triples.append((name, self.c.resolve("requires_constraint"), c))
+        return triples, names
 
     def explain(self) -> dict:
         """返回最近一次查询的推导链。"""
