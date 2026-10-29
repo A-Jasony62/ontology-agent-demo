@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from reasoner.engine import OntologyEngine, ONTO_PATH, DEFAULT_NS, _resolve_ns, local  # noqa: E402
+from reasoner.engine import OntologyEngine, ONTO_PATH, DEFAULT_NS, resolve_ns, local  # noqa: E402
 
 
 # 带显式 xml:base 的迷你本体（复刻真实领域包的写法：
@@ -120,7 +120,7 @@ def test_resolve_ns_excludes_standard_vocabularies(tmp_path):
     from rdflib import Graph
     g = Graph()
     g.parse(path, format="xml")
-    ns = _resolve_ns(path, g)
+    ns = resolve_ns(path, g)
     assert ns == "http://demo.example.org/full-iri-domain#"
     assert ns not in {
         "http://www.w3.org/1999/02/22-rdf-syntax-ns#",

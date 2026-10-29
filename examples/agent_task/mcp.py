@@ -11,7 +11,7 @@ adapter 的工厂"——SIGHUP 热重载后新 adapter 自动生效，无需重�
 from mcp.server.mcpserver import MCPServer
 
 from reasoner.engine import local
-from . import cq_gen, cq_tbox
+from . import cq
 
 import os
 from rdflib import Graph, Namespace, RDF, URIRef
@@ -209,7 +209,7 @@ def register_tools(server: MCPServer, get_adapter) -> None:
         "validate_tbox_draft 校验。用于 LLM 自动建模 + 推理验证流水线。"))
     def guide_tbox_draft(cqs: list[str]) -> dict:
         a = get_adapter()
-        return cq_tbox.guide_tbox_draft(a.engine, cqs)
+        return cq.guide_tbox_draft(a.engine, cqs)
 
     @server.tool(description=(
         "CQ 建模入口（校验工位，领域）：校验宿主生成的 Turtle TBox 草稿，返回分级验证报告"
@@ -217,7 +217,7 @@ def register_tools(server: MCPServer, get_adapter) -> None:
         "（pass / fixable / reject）及修复建议。cqs（可选）提供原 CQ 时，L4 按关键词校验"
         "期望公理（能力→属性链/依赖→传递/约束→disjoint）。只验 TBox，不替宿主编造 ABox 断言。"))
     def validate_tbox_draft(ttl: str, cqs: list[str] | None = None) -> dict:
-        return cq_tbox.validate_tbox_draft(ttl, cqs)
+        return cq.validate_tbox_draft(ttl, cqs)
 
     @server.tool(description=(
         "数据体检（SHACL，领域）：按 pipeline/shapes/agent_task.ttl 对当前 ABox 实例数据做"
@@ -234,7 +234,7 @@ def register_tools(server: MCPServer, get_adapter) -> None:
         "补齐「出题 → guide_tbox_draft 建模 → 判卷」链的最前端。"))
     def guide_cq_generation(focus: str | None = None) -> dict:
         a = get_adapter()
-        return cq_gen.guide_cq_generation(a.engine, focus)
+        return cq.guide_cq_generation(a.engine, focus)
 
     @server.tool(description=(
         "CQ 自动出题器-质检（领域）：对宿主 LLM 产出的 CQ 问题数组做确定性质检——问题句式/"
@@ -242,4 +242,4 @@ def register_tools(server: MCPServer, get_adapter) -> None:
         "（predicted_type 为建议标注）/四类题型覆盖度报告。返回 usable / revise / duplicate "
         "三档与缺口提醒。出题质量是人把关：机器质检后仍需挑题人终审。"))
     def validate_cqs(cqs: list[str]) -> dict:
-        return cq_gen.validate_cqs(cqs)
+        return cq.validate_cqs(cqs)

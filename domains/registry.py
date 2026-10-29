@@ -3,7 +3,7 @@
 与旧实现的差别（旧实现只能加载包内目录）：
     旧：importlib.import_module(f"domains.{name}")——只认 domains/ 下的子目录
     新：spec_from_file_location + submodule_search_locations——可加载任意路径，
-        同时保持包语义，`from . import cq_gen` 之类相对导入仍然有效
+        同时保持包语义，`from . import cq` 之类相对导入仍然有效
 
 为什么不直接用 `importlib.util.spec_from_file_location("x", "__init__.py")`：
     缺少 submodule_search_locations 时模块不是合法包，

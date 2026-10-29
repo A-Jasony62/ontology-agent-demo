@@ -1,6 +1,6 @@
-"""CQ 驱动 TBox 建模入口（agent_task 领域包，白名单纪律内、零 LLM 依赖）。
+"""CQ 驱动 TBox 建模（通用实现，与领域无关）。
 
-分工：demo 不内置 LLM，承担「prompt 规范器 + 验证工位」——
+分工：框架不内置 LLM，只承担「prompt 规范器 + 验证工位」——
   - guide_tbox_draft：CQ → 生成指令（prompt）+ 现有 schema 对照 + 自查清单，
     宿主（MCP 调用方的 LLM）据此生成 Turtle 草稿；
   - validate_tbox_draft：服务端校验草稿（L1-L5 分级），返回 verdict 与修复建议。
@@ -8,25 +8,20 @@
 反例守护：validate 只评 TBox 本身的可加载性/一致性/公理表达力，
 不替宿主构造 ABox 断言（与评测 Harness「语料防污染」同一纪律）。
 
-模板与领域术语来自 cq_prompts.json（可编辑，与 config.json / derivation.json 同风格）。
+从 agent_task 上移时改掉的两处领域耦合：
+  1. prompts 由调用方传入（默认取框架中立模板，见 prompts.py）；
+  2. `_resolve_ns` 改用公开名 `resolve_ns`（领域此前直接 import 私有符号）。
 """
 
 from __future__ import annotations
 
-import json
-import os
-
 import owlrl
-from rdflib import Graph, Literal, OWL, RDF, RDFS, URIRef
+from rdflib import Graph, OWL, RDF, RDFS, URIRef
 
-from reasoner.engine import _resolve_ns, local
-
-_DIR = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(_DIR, "cq_prompts.json"), encoding="utf-8") as _f:
-    _P = json.load(_f)
+from reasoner.engine import local, resolve_ns
 
 # rdf/rdfs/owl/xsd 元谓词（导出 schema_map 时排除）
-_META_PRED = {
+META_PRED = {
     "type", "subClassOf", "subPropertyOf", "label", "comment", "domain", "range",
     "equivalentClass", "equivalentProperty", "disjointWith", "intersectionOf",
     "unionOf", "complementOf", "oneOf", "first", "rest", "someValuesFrom",
@@ -34,8 +29,11 @@ _META_PRED = {
 }
 
 
-def _schema_map(engine) -> dict:
-    """从现有本体导出类/属性短名与 label（供 guide 参照）。"""
+def schema_map(engine) -> dict:
+    """从现有本体导出类/属性短名与 label（供 guide 参照）。
+
+    只依赖引擎的 `g` 与可选 `label()`，不假设任何领域术语。
+    """
     g = engine.g
     classes = []
     for c in sorted(set(g.subjects(RDF.type, OWL.Class)), key=str):
@@ -45,61 +43,60 @@ def _schema_map(engine) -> dict:
             "name": local(c),
             "label": engine.label(c) if hasattr(engine, "label") else local(c),
         })
-    prop_iris = set()
-    for s in g.subjects(RDF.type, OWL.ObjectProperty):
-        if isinstance(s, URIRef):
-            prop_iris.add(s)
-    for s in g.subjects(RDF.type, OWL.DatatypeProperty):
-        if isinstance(s, URIRef):
-            prop_iris.add(s)
-    for _s, p, _o in g:
-        if isinstance(p, URIRef) and local(p) not in _META_PRED:
-            prop_iris.add(p)
+    prop_iris = _property_iris(g)
     return {"classes": classes, "properties": sorted(local(x) for x in prop_iris)}
 
 
-def guide_tbox_draft(engine, cqs) -> dict:
+def _property_iris(g) -> set:
+    iris = set()
+    for s in g.subjects(RDF.type, OWL.ObjectProperty):
+        if isinstance(s, URIRef):
+            iris.add(s)
+    for s in g.subjects(RDF.type, OWL.DatatypeProperty):
+        if isinstance(s, URIRef):
+            iris.add(s)
+    for _s, p, _o in g:
+        if isinstance(p, URIRef) and local(p) not in META_PRED:
+            iris.add(p)
+    return iris
+
+
+def guide_tbox_draft(engine, cqs, prompts: dict | None = None) -> dict:
     """把 CQ 清单规范化为宿主生成指令 + schema 对照 + 自查清单。"""
+    if prompts is None:
+        from .prompts import load_prompts
+
+        prompts = load_prompts()
     cq_lines = "\n".join(f"- {c}" for c in cqs) if cqs else "- （未提供，请从领域需求补充）"
     axiom_hints = "\n".join(
-        f"  - {k}: {v}" for k, v in _P["axiom_patterns"].items())
+        f"  - {k}: {v}" for k, v in prompts["axiom_patterns"].items())
     prompt = (
-        f"{_P['format_instruction']}\n"
-        f"命名空间建议：{_P['namespace_hint']}\n"
+        f"{prompts['format_instruction']}\n"
+        f"命名空间建议：{prompts['namespace_hint']}\n"
         f"公理模式提示：\n{axiom_hints}\n"
         f"待建模能力问题（CQ）：\n{cq_lines}"
     )
     return {
         "prompt": prompt,
-        "schema_map": _schema_map(engine),
-        "checklist": _P["checklist"],
-        "namespace_hint": _P["namespace_hint"],
-        "format_instruction": _P["format_instruction"],
+        "schema_map": schema_map(engine),
+        "checklist": prompts["checklist"],
+        "namespace_hint": prompts["namespace_hint"],
+        "format_instruction": prompts["format_instruction"],
     }
 
 
-def _extract_terms(g: Graph) -> tuple[list, list]:
-    """提取 TBox 中的类与属性短名（类=owl:Class 主体；属性=Object/DatatypeProperty 主体或非元谓词）。"""
-    classes = [local(c) for c in g.subjects(RDF.type, OWL.Class) if isinstance(c, URIRef)]
-    prop_iris = set()
-    for s in g.subjects(RDF.type, OWL.ObjectProperty):
-        if isinstance(s, URIRef):
-            prop_iris.add(s)
-    for s in g.subjects(RDF.type, OWL.DatatypeProperty):
-        if isinstance(s, URIRef):
-            prop_iris.add(s)
-    for _s, p, _o in g:
-        if isinstance(p, URIRef) and local(p) not in _META_PRED:
-            prop_iris.add(p)
-    return classes, sorted(local(x) for x in prop_iris)
-
-
-def validate_tbox_draft(ttl: str, cqs: list[str] | None = None) -> dict:
+def validate_tbox_draft(ttl: str, cqs: list[str] | None = None,
+                        prompts: dict | None = None) -> dict:
     """服务端校验草稿（L1-L5 分级），返回 verdict（pass / fixable / reject）。
 
     cqs 可选：提供时 L4 按 CQ 关键词推断「期望公理」，缺失则 fixable；不提供时
     L4 只做类层次成形检查（宽松）。
     """
+    if prompts is None:
+        from .prompts import load_prompts
+
+        prompts = load_prompts()
+
     g = Graph()
     try:
         g.parse(data=ttl, format="turtle")
@@ -111,15 +108,16 @@ def validate_tbox_draft(ttl: str, cqs: list[str] | None = None) -> dict:
 
     # L2 命名空间与最小结构
     try:
-        ns = _resolve_ns("", g, use_xml_base=False)
+        ns = resolve_ns("", g, use_xml_base=False)
     except Exception as exc:
         return {"verdict": "reject", "level": "L2", "valid_syntax": True,
                 "valid_ns_resolved": False, "error": f"默认命名空间推导失败：{exc}"}
     classes, props = _extract_terms(g)
     if not classes or not props:
         return {"verdict": "fixable", "level": "L2", "valid_syntax": True,
-                "valid_ns_resolved": True, "ns": ns, "classes": classes, "properties": props,
-                "consistent": None, "issues": ["缺少 owl:Class 或 owl:ObjectProperty（至少各 1 个）"]}
+                "valid_ns_resolved": True, "consistent": None, "ns": ns,
+                "classes": classes, "properties": props,
+                "issues": ["缺少 owl:Class 或 owl:ObjectProperty（至少各 1 个）"]}
 
     # L4 公理素材采集（必须在 owlrl 物化前：expand 会重写 propertyChainAxiom 的列表结构）
     chains = []
@@ -163,11 +161,6 @@ def validate_tbox_draft(ttl: str, cqs: list[str] | None = None) -> dict:
             consistency_err = "一致性问题：" + "；".join(disjoint_conflict)
 
     # L4 判定（公理表达力，CQ 感知：提供 cqs 时按关键词期望对应公理）
-    axiom_smoke = {
-        "property_chain_axioms": chains,
-        "transitive_properties": trans,
-        "subclass_edges": subclass_count,
-    }
     smoke_issue = None
     if subclass_count == 0:
         smoke_issue = "类层次缺失：没有任何 rdfs:subClassOf 关系"
@@ -185,13 +178,14 @@ def validate_tbox_draft(ttl: str, cqs: list[str] | None = None) -> dict:
             smoke_issue = "公理缺失（对照 CQ 期望）：" + "、".join(missing)
 
     # L5 术语覆盖（对照 schema_terms，缺项列表化）
+    terms = prompts.get("schema_terms", {})
     covered, missing = [], []
-    for tc in _P["schema_terms"]["classes"]:
+    for tc in terms.get("classes", []):
         if tc in classes:
             covered.append(tc)
         else:
             missing.append(f"class:{tc}")
-    for tp in _P["schema_terms"]["properties"]:
+    for tp in terms.get("properties", []):
         if tp in props:
             covered.append(tp)
         else:
@@ -225,19 +219,25 @@ def validate_tbox_draft(ttl: str, cqs: list[str] | None = None) -> dict:
             "covered_terms": sorted(covered), "missing_terms": missing,
         },
         "issues": issues,
-        "suggestions": _fix_suggestions(issues),
+        "suggestions": fix_suggestions(issues),
     }
 
 
-def _fix_suggestions(issues: list) -> list[str]:
+def fix_suggestions(issues: list) -> list[str]:
     """模板化修复建议（供宿主 LLM 迭代）。"""
     out = []
     if any("类层次缺失" in i for i in issues):
-        out.append("补充 rdfs:subClassOf 类层次（如 SimpleTask ⊑ Task）。")
+        out.append("补充 rdfs:subClassOf 类层次（如子概念 ⊑ 父概念）。")
     if any("公理表达力不足" in i for i in issues):
-        out.append("按 CQ 补高阶公理：能力匹配用 propertyChainAxiom，依赖传递用 TransitiveProperty。")
+        out.append("按 CQ 补高阶公理：关系推导用 propertyChainAxiom，传递用 TransitiveProperty。")
     if any("术语覆盖" in i for i in issues):
         out.append("补齐缺失类/属性短名，保持命名空间一致。")
     if any("一致性" in i for i in issues):
         out.append("检查属性定义是否冲突（domain/range/互斥）。")
     return out
+
+
+def _extract_terms(g: Graph) -> tuple[list, list]:
+    """提取 TBox 中的类与属性短名（类=owl:Class 主体；属性=Object/DatatypeProperty 主体或非元谓词）。"""
+    classes = [local(c) for c in g.subjects(RDF.type, OWL.Class) if isinstance(c, URIRef)]
+    return classes, sorted(local(x) for x in _property_iris(g))

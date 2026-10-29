@@ -134,6 +134,11 @@ def _resolve_ns(onto_path: str, g: "Graph", use_xml_base: bool = True) -> str:
     return DEFAULT_NS
 
 
+# 公开名：领域包与框架子模块（reasoner/cq/）需要它，不该依赖下划线私有符号。
+# 旧名保留为别名，等 P3 收尾时清理调用点后再删。
+resolve_ns = _resolve_ns
+
+
 class OntologyEngine:
     """通用本体引擎：加载 / 推理 / 查询 / 写图原语，与本体定义无关。"""
 
@@ -158,7 +163,7 @@ class OntologyEngine:
         # 默认命名空间：显式 ns > 从本体自动推导（xml:base / IRI 频率） > DEFAULT_NS
         # 多文件（启用 extensions）时跳过 xml:base 文件头依赖，用 IRI 频率推导
         self.NS = Namespace(ns) if ns else Namespace(
-            _resolve_ns(onto_path, self.raw, use_xml_base=self.extensions_dir is None)
+            resolve_ns(onto_path, self.raw, use_xml_base=self.extensions_dir is None)
         )
 
         # L1：OWL 2 RL 推理（属性链、传递闭包、子类/等价类分类）
@@ -200,7 +205,7 @@ class OntologyEngine:
         self._parse_sources(new_raw)
         self._parse_sources(new_g)
         owlrl.DeductiveClosure(owlrl.OWLRL_Semantics).expand(new_g)
-        new_ns = Namespace(_resolve_ns(self.onto_path, new_raw, use_xml_base=self.extensions_dir is None))
+        new_ns = Namespace(resolve_ns(self.onto_path, new_raw, use_xml_base=self.extensions_dir is None))
         # 全部成功 → 原子切换
         self.raw, self.g, self.NS = new_raw, new_g, new_ns
         return {
