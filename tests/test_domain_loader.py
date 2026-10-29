@@ -56,9 +56,17 @@ def _make_pkg(root, name, *, with_creator=True, init_extra="", sub_value=None):
     pkg.mkdir(parents=True, exist_ok=True)
     lines = [f"NAME = {name!r}", f"DESCRIPTION = {name + ' 领域'!r}"]
     if with_creator:
+        # P1-1 起加载即校验契约：这里的探测包显式声明"零能力"，
+        # 避免把「加载器测试」写成「业务契约测试」。
         lines += [
+            "class _Adapter:",
+            "    CAPABILITIES = ()",
+            "    def __init__(self, engine, config):",
+            "        self.engine = engine",
+            "        self.config = config",
+            "        self.name = NAME",
             "def create_adapter(engine, config=None):",
-            "    return {'engine': engine, 'config': config, 'name': NAME}",
+            "    return _Adapter(engine, config)",
         ]
     if sub_value is not None:
         (pkg / "sub.py").write_text(f"VALUE = {sub_value}\n", encoding="utf-8")
@@ -97,9 +105,9 @@ def test_load_domain_returns_adapter(tmp_path, root):
 
     engine = object()
     adapter = load_domain("probe", engine, {"k": 1}, settings=cfg)
-    assert adapter["engine"] is engine
-    assert adapter["config"] == {"k": 1}
-    assert adapter["name"] == "probe"
+    assert adapter.engine is engine
+    assert adapter.config == {"k": 1}
+    assert adapter.name == "probe"
 
 
 # ---------------- 复用与热重载 ----------------

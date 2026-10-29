@@ -19,8 +19,13 @@
     NAME          str    领域标识（缺省取目录名）
     DESCRIPTION   str    领域说明
     ONTO_FILE     str    本体文件名（可选，缺省在包内找 *.owl）
-    CAPABILITIES  list   支持的能力（可选，缺省视为全量）
+    CAPABILITIES  list   声明本领域提供哪些能力（声明即承诺，见下）
     create_adapter(engine, config=None) -> 适配器实例
+
+CAPABILITIES 的三态语义（P1-1 起强制校验）：
+    缺省 / None   视为全量能力 → 7 个契约方法缺一个就在加载时失败
+    ("a", "b")    声明即承诺 → 清单内必须实现，清单外视为不提供
+    ()            零能力领域（只有通用层端点可用）
 
 用法：
     from domains import list_domains, load_domain, load_domain_module
@@ -39,6 +44,7 @@ from pathlib import Path
 from types import ModuleType
 
 from config import ConfigError, DomainConfig, load_config
+from reasoner.protocol import undeclared_missing
 
 __all__ = [
     "DomainContractError",
@@ -197,14 +203,37 @@ def _validate_contract(name: str, module: ModuleType) -> None:
 
 
 def load_domain(name: str, engine, config=None, *, settings: DomainConfig | None = None):
-    """按标识加载领域适配器。
+    """按标识加载领域适配器，并**在加载时**校验契约。
 
     config 是**领域自己的适配器配置**（原样传给 create_adapter），
     与运行态配置 DomainConfig（settings）不是一回事。
+
+    契约校验（P1-1）：缺方法且未在 CAPABILITIES 里显式排除 →
+    DomainContractError。把"漏实现"从"某个请求 500"提前到"启动即失败"，
+    代价是新领域第一次跑起来就得把契约说清楚。
     """
     module = load_domain_module(name, settings=settings)
     _validate_contract(name, module)
-    return module.create_adapter(engine, config)
+    adapter = module.create_adapter(engine, config)
+    _validate_adapter(name, adapter)
+    return adapter
+
+
+def _validate_adapter(name: str, adapter) -> None:
+    missing = undeclared_missing(adapter)
+    if not missing:
+        return
+    declared = getattr(adapter, "CAPABILITIES", None)
+    hint = (
+        "未声明 CAPABILITIES，视为要求全量能力"
+        if declared is None
+        else f"已声明 CAPABILITIES={list(declared)!r}，但清单内方法未实现"
+    )
+    raise DomainContractError(
+        f"领域包 {name!r} 的适配器未满足契约：缺 {', '.join(missing)}（{hint}）。"
+        f"契约见 reasoner/protocol.py；只想实现部分能力时，用 CAPABILITIES "
+        f"把不实现的能力排除，或在 AdapterBase 上继承框架默认实现。"
+    )
 
 
 def list_domains(*, settings: DomainConfig | None = None) -> list[dict]:

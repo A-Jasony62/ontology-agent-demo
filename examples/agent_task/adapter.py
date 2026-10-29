@@ -27,6 +27,20 @@ from reasoner.derivation import expand
 NAME = "agent_task"
 DESCRIPTION = "智能体任务编排：能力匹配 / 任务编排 / 分配合规 / 任务分类 / 一致性 / 图谱导出"
 
+# 能力声明（P1-1）：契约见 reasoner/protocol.py。声明即承诺——
+# 清单内的方法必须实现，清单外的视为"本领域不提供"，端点返 400 而非 500。
+# 这里逐字写出而不是 import 框架常量：领域包不该依赖框架内部符号，
+# 多写一行的代价远小于"框架改个常量名就静默打断领域包"。
+CAPABILITIES = (
+    "capability_match",
+    "orchestrate",
+    "assign",
+    "classify",
+    "consistency",
+    "explain",
+    "graph_export",
+)
+
 # 领域数据（独立 JSON 文件，通用加载器来自 reasoner.semantic）
 _DIR = os.path.dirname(os.path.abspath(__file__))
 ONTO_FILE = os.path.join(_DIR, "agent_task_ontology.owl")  # 本体文件（领域包自声明）
@@ -58,6 +72,7 @@ class AgentTaskAdapter:
         self.engine = engine
         self.c = config
         self.NAME = NAME                       # 领域标识（health / 日志 / 运行时发现）
+        self.CAPABILITIES = CAPABILITIES       # 能力声明（端点门禁读实例属性）
         self.NS = engine.NS                     # 供 explain / 外部构造 URIRef
         self.label = engine.label               # 供 explain / 外部取中文名（owl rdfs:label）
         self.templates = dict(TEMPLATES)        # 推导链文案模板
