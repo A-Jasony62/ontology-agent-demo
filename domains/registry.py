@@ -199,10 +199,12 @@ def load_domain_module(
 
 
 def _validate_contract(name: str, module: ModuleType) -> None:
-    if not callable(getattr(module, "create_adapter", None)):
+    if not callable(getattr(module, "create_adapter", None)) and not callable(
+        getattr(module, "create_adapter_ctx", None)
+    ):
         raise DomainContractError(
-            f"领域包 {name!r} 未提供 create_adapter(engine, config=None)，"
-            f"模块 {getattr(module, '__name__', '?')} 不满足最小契约"
+            f"领域包 {name!r} 未提供 create_adapter(engine, config=None) 或 "
+            f"create_adapter_ctx(ctx)，模块 {getattr(module, '__name__', '?')} 不满足最小契约"
         )
 
 
@@ -212,13 +214,25 @@ def load_domain(name: str, engine, config=None, *, settings: DomainConfig | None
     config 是**领域自己的适配器配置**（原样传给 create_adapter），
     与运行态配置 DomainConfig（settings）不是一回事。
 
+    工厂约定（P1-4 起）：
+        优先 create_adapter_ctx(ctx)——框架能力一次性交付，领域不必
+        import 四个不同的 reasoner 内部模块；
+        没有时退回 create_adapter(engine, config)——老领域包零改动加载。
+
     契约校验（P1-1）：缺方法且未在 CAPABILITIES 里显式排除 →
     DomainContractError。把"漏实现"从"某个请求 500"提前到"启动即失败"，
     代价是新领域第一次跑起来就得把契约说清楚。
     """
     module = load_domain_module(name, settings=settings)
     _validate_contract(name, module)
-    adapter = module.create_adapter(engine, config)
+    factory = getattr(module, "create_adapter_ctx", None)
+    if callable(factory):
+        from reasoner.plugin import PluginContext   # 延迟导入：见文件头说明
+
+        ctx = PluginContext.for_module(module, engine, config)
+        adapter = factory(ctx)
+    else:
+        adapter = module.create_adapter(engine, config)
     _validate_adapter(name, adapter)
     return adapter
 

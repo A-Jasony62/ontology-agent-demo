@@ -19,10 +19,14 @@ import os
 
 from rdflib import URIRef, RDF, RDFS
 
-from reasoner.abox import AboxStore
-from reasoner.engine import local
-from reasoner.semantic import SemanticConfig, load_domain_config, load_derivation_config
-from reasoner.derivation import expand
+# 只从门面导入（P1-4）：框架内部模块调整时本领域不需要跟着改 import
+from reasoner.plugin import (
+    PluginContext,
+    SemanticConfig,
+    load_derivation_config,
+    load_domain_config,
+    local,
+)
 
 NAME = "agent_task"
 DESCRIPTION = "智能体任务编排：能力匹配 / 任务编排 / 分配合规 / 任务分类 / 一致性 / 图谱导出"
@@ -57,6 +61,11 @@ def create_adapter(engine, config: SemanticConfig | None = None):
     return AgentTaskAdapter(engine, config or DEFAULT_CONFIG)
 
 
+def create_adapter_ctx(ctx: PluginContext):
+    """P1-4 起的首选工厂：框架能力由 ctx 一次性交付，领域不再 import 内部模块。"""
+    return AgentTaskAdapter(ctx.engine, ctx.config or DEFAULT_CONFIG, ctx=ctx)
+
+
 class AgentTaskAdapter:
     """智能体任务编排领域的查询与规则（包装通用引擎）。
 
@@ -68,7 +77,9 @@ class AgentTaskAdapter:
       - 图谱导出      graph_export（供前端渲染）
     """
 
-    def __init__(self, engine, config: SemanticConfig):
+    def __init__(self, engine, config: SemanticConfig, ctx: PluginContext | None = None):
+        # ctx 缺省时自建：让 `AgentTaskAdapter(engine, cfg)` 这种旧式构造继续可用
+        self.ctx = ctx or PluginContext.for_engine(engine)
         self.engine = engine
         self.c = config
         self.NAME = NAME                       # 领域标识（health / 日志 / 运行时发现）
@@ -84,8 +95,7 @@ class AgentTaskAdapter:
 
         # ABox 事务（框架能力，P1-2）：变更计数 / changelog / 增量落盘。
         # 业务谓词在这里声明——框架不猜哪些属性算"引用"。
-        self.abox = AboxStore(
-            engine,
+        self.abox = self.ctx.abox(
             resolve_predicate=self._p,
             reference_predicates=(
                 "composed_of", "depends_on", "assigned_to", "requires_capability",
@@ -243,7 +253,7 @@ class AgentTaskAdapter:
             m["rule_tmpl"] = "rule_r2" if m["rule"] == "R2" else "rule_r1"
 
         self.last_query_kind = "capability_match"
-        self.last_derivation = expand(
+        self.last_derivation = self.ctx.expand(
             self.derivations["capability_match"],
             {"task_label": self.label(task), "matches": matched},
             self.templates,
@@ -290,7 +300,7 @@ class AgentTaskAdapter:
             s["idx"] = i
 
         self.last_query_kind = "orchestrate"
-        self.last_derivation = expand(
+        self.last_derivation = self.ctx.expand(
             self.derivations["orchestrate"],
             {"task_label": self.label(task), "steps": steps},
             self.templates,
@@ -329,7 +339,7 @@ class AgentTaskAdapter:
 
         conflict = self._compliance_conflict(task, agent)
         self.last_query_kind = "assign"
-        self.last_derivation = expand(
+        self.last_derivation = self.ctx.expand(
             self.derivations["assign"],
             {"task_label": self.label(task), "agent_label": self.label(agent),
              "conflict": conflict},
@@ -364,7 +374,7 @@ class AgentTaskAdapter:
                 info.append(f"任务「{self.label(task)}」暂无任何可执行 Agent，建议补充能力或人工介入")
 
         self.last_query_kind = "consistency"
-        self.last_derivation = expand(
+        self.last_derivation = self.ctx.expand(
             self.derivations["consistency"],
             {"assignments_count": len(assignments), "conflicts": conflicts},
             self.templates,
@@ -437,7 +447,7 @@ class AgentTaskAdapter:
 
         matches = [m["agent"] for m in self.capability_match(iri, with_derivation=False)["matches"]]
         self.last_query_kind = "classify"
-        self.last_derivation = expand(
+        self.last_derivation = self.ctx.expand(
             self.derivations["classify"],
             {"iri_label": self.label(iri), "inferred_types": inferred_types,
              "matches_label": "、".join(self.label(self.NS[m]) for m in matches) or None},

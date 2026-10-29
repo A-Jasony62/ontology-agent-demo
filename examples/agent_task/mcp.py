@@ -10,7 +10,7 @@ adapter 的工厂"——SIGHUP 热重载后新 adapter 自动生效，无需重�
 
 from mcp.server.mcpserver import MCPServer
 
-from reasoner.engine import local
+from reasoner.plugin import local
 from . import cq
 
 import os
