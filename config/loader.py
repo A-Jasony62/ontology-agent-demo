@@ -72,15 +72,21 @@ class ConfigError(RuntimeError):
 
 
 def check_domain_name(name: Any) -> str:
-    """校验领域标识：不得为空、不得含路径分隔符、不得以点开头。"""
+    """校验领域标识：必须是合法 Python 标识符。
+
+    为什么要求标识符：安装名会成为模块全名的一部分（`domains.<name>`），
+    `my-domain` 这类名字在 sys.modules 里能凑合，但包内相对导入、
+    `import domains.my-domain` 等路径都会失效，问题会延后到运行期才暴露。
+    """
     if not isinstance(name, str):
         raise ConfigError(f"领域名必须是字符串，实际为 {type(name).__name__}")
     name = name.strip()
     if not name:
         raise ConfigError("领域名不能为空")
-    if name in {".", ".."} or "/" in name or "\\" in name or name.startswith("."):
+    if not name.isidentifier():
         raise ConfigError(
-            f"非法领域名 {name!r}：不得包含路径分隔符，不得以 '.' 开头"
+            f"非法领域名 {name!r}：必须是合法 Python 标识符"
+            "（字母或下划线开头，只含字母、数字、下划线；不能有路径分隔符、横线、点）"
         )
     return name
 

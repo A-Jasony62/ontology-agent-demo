@@ -147,7 +147,9 @@ def test_bad_watch_values_raise(tmp_path):
         load_config(config_dir=cdir, project_root=tmp_path, env={})
 
 
-@pytest.mark.parametrize("bad", ["", "  ", ".", "..", "../etc", "a/b", "a\\b", ".hidden"])
+@pytest.mark.parametrize(
+    "bad", ["", "  ", ".", "..", "../etc", "a/b", "a\\b", ".hidden", "my-domain", "9lives"]
+)
 def test_check_domain_name_rejects(bad):
     with pytest.raises(ConfigError):
         check_domain_name(bad)

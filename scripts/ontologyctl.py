@@ -29,6 +29,11 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 API_BASE = os.environ.get("DOUBAO_API_BASE", "http://127.0.0.1:8000").rstrip("/")
 GIT_ROOT = os.environ.get("ONTOLOGY_GIT_ROOT", PROJECT_ROOT)
 
+# 直接以脚本方式运行时，项目根不在 sys.path 上（脚本目录才是），
+# 这里补上，domain 子命令需要 import config / domains.installer。
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 # 本体相关文件（git add / rollback 范围）
 ONTO_FILES = [
     "domains/*/agent_task_ontology.owl",
@@ -167,6 +172,26 @@ def cmd_log(args) -> dict:
     }
 
 
+def cmd_domain(args) -> dict:
+    """领域包管理：install --from <path> [--name N] [--to ROOT] [--force]。"""
+    from config import ConfigError, load_config
+    from domains.installer import install
+
+    action = getattr(args, "domain_action", None)
+    if action != "install":
+        return {"ok": False, "error": f"不支持的 domain 操作：{action}"}
+
+    try:
+        cfg = load_config(cli_root=getattr(args, "to", None))
+        result = install(args.src, root=cfg.root, name=args.name, force=args.force)
+    except ConfigError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    result["root"] = str(cfg.root)
+    result["installed_domains"] = cfg.installed()
+    return result
+
+
 SUBCOMMANDS = {
     "status": (cmd_status, "聚合 health + 本体状态 + MCP 探测（--json 输出结构化结果）"),
     "reload": (cmd_reload, "API reload + MCP kill -HUP 热重载"),
@@ -174,7 +199,22 @@ SUBCOMMANDS = {
     "diff": (cmd_diff, "未提交变更预览（服务 changelog + git status）"),
     "rollback": (cmd_rollback, "git checkout 本体文件并 reload（可指定 tag）"),
     "log": (cmd_log, "git log（本体相关）+ 服务 changelog + tags"),
+    "domain": (cmd_domain, "领域包管理：install --from <path>（源目录必填）"),
 }
+
+
+def _add_domain_actions(parser, common) -> None:
+    dsub = parser.add_subparsers(dest="domain_action", required=True)
+    inst = dsub.add_parser(
+        "install", help="从指定路径安装领域包到运行态 root", parents=[common]
+    )
+    inst.add_argument(
+        "--from", dest="src", required=True,
+        help="领域包源目录（相对当前目录或绝对路径）",
+    )
+    inst.add_argument("--name", default=None, help="安装名（缺省取源目录名）")
+    inst.add_argument("--to", default=None, help="目标 root（缺省取配置 domains.root）")
+    inst.add_argument("--force", action="store_true", help="覆盖已安装版本（先备份）")
 
 
 def main() -> int:
@@ -188,6 +228,8 @@ def main() -> int:
             p.add_argument("-m", "--message", required=True, help="提交信息")
         if name == "rollback":
             p.add_argument("tag", nargs="?", default=None, help="回滚目标 tag（缺省最近本体 tag）")
+        if name == "domain":
+            _add_domain_actions(p, common)
     args = ap.parse_args()
 
     fn = SUBCOMMANDS[args.cmd][0]
