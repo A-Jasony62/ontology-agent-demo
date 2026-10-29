@@ -1,7 +1,5 @@
 # 06 用 MCP 把本体服务接入智能体
 > 本文是《本体上手指南》系列第 7 篇（共 9 篇），零基础入门「本体 × 智能体」。
-> 完整系列文章与全部源码都在 GitHub：**https://github.com/jasony62/ontology-agent-demo**（欢迎 Star / Fork / Issue）
-> 在线免费阅读（GitHub Pages）：https://jasony62.github.io/ontology-agent-demo/
 
 > 阅读时长：约 12 分钟 · 配套动手：约 8 分钟
 > **读完你能**：把本体推理服务接进豆包，让它在对话里直接调用推理工具——"智能体 × 本体"正式合体
@@ -45,11 +43,11 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
 2. 传输类型选 **HTTP**，MCP 服务器 URL 填 `http://127.0.0.1:9000/mcp`；
 3. 保存后即可在对话中直接调用本体推理工具。
 
-> 连接器本质：把"对话中能看到哪些工具"告诉豆包。保存后豆包就"认识"了本体的 14 个工具。
+> 连接器本质：把"对话中能看到哪些工具"告诉豆包。保存后豆包就"认识"了本体的 26 个工具。
 
-## 第 3 步：认识 14 个工具
+## 第 3 步：认识 26 个工具
 
-服务共暴露 **14 个工具**：8 个领域工具（业务语义）+ 6 个通用工具（与本体无关）。
+服务共暴露 **26 个工具**，分「核心业务工具」与「进阶 / 作者态工具」两组。核心 14 个是接入对话最常用、也是本篇演示用到的；进阶 12 个面向本体建模、校验、守卫与证明，做"造自己的领域"（篇 8）时才会用到。
 
 **领域工具（8 个，走适配器）**
 
@@ -76,6 +74,23 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
 | `infer` | — | 重新推理 + 三元组统计 |
 
 有个小细节很贴心：`entities` 工具专门用来"帮智能体选参数"——它返回全部任务/智能体/能力/约束的短名与中文标签，智能体不确定参数时先查它，避免瞎猜短名。
+
+**进阶 / 作者态工具（12 个，完整列表以 MCP `tools/list` 返回为准）**
+
+| 工具 | 说明 |
+|---|---|
+| `status` | 服务与当前领域状态自检 |
+| `active_facts` | 查看推理后的"激活事实"图（raw → g 的结果） |
+| `explain_proof` | 机读证明树（`proof`，与 `explain` 的人读推导链互补） |
+| `predefined_queries` | 列出预置的 SPARQL 查询模板 |
+| `run_predefined_query` | 按名运行一条预置查询 |
+| `guide_tbox_draft` | 引导式草拟 TBox（类 / 属性 / 公理） |
+| `validate_tbox_draft` | 校验草拟 TBox 的合法性 |
+| `validate_shapes` | 校验 SHACL Shapes |
+| `guide_cq_generation` | 引导生成本体能力问题（CQ） |
+| `validate_cqs` | 校验能力问题（CQ） |
+| `guard_status` | 查看守卫（guard）状态 |
+| `pipeline_gate` | 流水线闸门状态与触发 |
 
 ## 第 4 步：对话演示完整链路
 
@@ -105,16 +120,16 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
 |---|---|---|
 | 面向 | 前端页面、脚本、任何 HTTP 客户端 | 智能体（豆包连接器等 MCP 客户端） |
 | 协议 | HTTP + JSON | MCP（JSON-RPC / SSE） |
-| 工具/端点 | 11 个端点 | 14 个工具 |
+| 工具/端点 | 24 个端点 | 26 个工具 |
 | 依赖 | 独立进程 | 内嵌引擎，不依赖 REST |
 
-两者共享**同一套引擎与领域包**——这就是篇 5 架构图的"多通道出口"：**同一种能力，按消费方选通道**。脚本和前端走 REST；智能体走 MCP。
+两者共享**同一套引擎与领域包**——这就是篇 5（搭建本体推理服务）所讲的服务"多通道出口"：**同一种能力，按消费方选通道**。脚本和前端走 REST；智能体走 MCP。
 
 ## 小结
 
 1. **MCP = 智能体的 USB 接口**：能力封装成标准工具，智能体自动发现、按说明调用。
 2. **一行命令启动**：`docker compose up -d mcp`，内嵌引擎零依赖；豆包侧边栏加连接器即可接入。
-3. **14 个工具**：8 领域（匹配/编排/分配/分类/一致性/解释/图谱/实体）+ 6 通用（SPARQL 等）。
+3. **26 个工具**：14 核心（匹配/编排/分配/分类/一致性/解释/图谱/实体 + SPARQL 等通用）+ 12 进阶（建模/校验/守卫/证明，篇 8 用到）。
 4. **智能体听懂人话，本体算得准讲得清**——MCP 是两者的"合体通道"。
 
 **常见问题**
@@ -123,20 +138,6 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
   A：REST 是"人/程序按文档调用"；MCP 是"智能体自动发现并调用"——工具带机器可读的 schema 和描述，智能体自己决定何时调用哪个。对本项目而言，二者背后是同一个引擎。
 - **Q：只能接豆包吗？**
   A：不是。任何 MCP 客户端都能接：`--transport stdio` 可接本地客户端 / Claude Desktop；streamable-http 可接其他支持 MCP 的智能体平台。
-
-## 获取项目：GitHub 一键直达
-
-本系列全部 9 篇文章、项目源码与可运行示例：
-
-- **GitHub 仓库**：https://github.com/jasony62/ontology-agent-demo（Star / Fork / Issue 都欢迎）
-- **在线阅读**：https://jasony62.github.io/ontology-agent-demo/（GitHub Pages 自动构建，含全部配图）
-- **本地一键运行**：
-
-  ```bash
-  git clone https://github.com/jasony62/ontology-agent-demo.git
-  cd ontology-agent-demo
-  docker compose up -d api
-  ```
 
 ---
 **下一篇**：篇 7《智能体 × 本体协作实战》——总结分工模型与最佳实践，并教你判断"什么时候该用本体"。

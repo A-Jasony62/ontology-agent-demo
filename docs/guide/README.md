@@ -4,7 +4,6 @@
 
 > 全程动手，命令在仓库根目录（`ontology-agent-demo/`）下可复现；配图源文件与 PNG 均在 `docs/guide/assets/`。
 > **零 OWL 基础友好**：篇 1/3/8 文末均附「本文用到的 OWL 语法」速查附录，正文在给出 .owl 片段时同步逐行讲解。
-> 在线阅读：[GitHub Pages 站点](https://jasony62.github.io/ontology-agent-demo/)（由本目录经 MkDocs 自动构建）。
 
 ## 学习路径
 
@@ -31,6 +30,8 @@
 | [07-智能体协作实战.md](07-智能体协作实战.md) | 智能体 × 本体实战 | 设计自己的协作应用，判断何时用本体 |
 | [08-扩展新领域.md](08-扩展新领域.md) | 扩展新领域 | 换本体、新建领域、加规则与查询 |
 
+> **编号对照（重要）**：本指南的篇号与「用户手册」的篇号**不同**——例如本指南的 **篇 5（搭建本体推理服务）** 正是用户手册的 **08 搭建本体推理服务**。两者是同一主题的两层：指南偏"入门讲解"，手册偏"操作参考"。跨文档跳转时认准主题名，别被编号带偏。
+
 ## 快速环境准备（Docker）
 
 无需安装任何 Python 依赖——用 Docker 一条命令起服务：
@@ -42,7 +43,7 @@ docker compose up -d     # 构建镜像并后台启动 API(:8000) + MCP(:9000)
 
 首次构建会自动拉取基础镜像并安装依赖（Dockerfile 默认用清华 TUNA pip 源）；之后秒级启动。
 
-验证（29 项测试全绿，在容器内执行）：
+验证（178 项测试全绿，在容器内执行）：
 
 ```bash
 docker compose exec api python -m pytest tests/ -q
@@ -88,7 +89,7 @@ docker compose exec api python -m pytest tests/ -q
 | 02-overview.png | 篇 2：本体全景 |
 | 03-r1-flow.png / 03-derivation.png | 篇 3：属性链流程 / 推导链 |
 | 04-lpg-vs-rdf.png | 篇 4：属性图 vs 语义图 |
-| 05-architecture.png | 篇 5：三层架构 |
+| 05-framework-overview.png / 05-ontology-components.png / 05-reasoning-flow.png / 05-explanation-layers.png | 篇 5：框架总览 / 四构件 / 推理流 / 解释层（共 4 张） |
 | 06-mcp-arch.png | 篇 6：MCP 接入链路 |
 | 07-sequence.png | 篇 7：协作时序 |
 | 08-extend.png | 篇 8：三条扩展路径 |
