@@ -31,6 +31,7 @@
 
 import hashlib
 import os
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,6 +56,7 @@ class LazyStaticFiles(StaticFiles):
 
 import reasoner.engine as engine_mod
 from reasoner.engine import get_engine, OntologyEngine
+from reasoner.protocol import missing_methods, supports
 from domains import load_domain
 from .schemas import (
     ReasonRequest, ClassifyRequest, RevokeRequest, ImportRequest,
@@ -65,6 +67,14 @@ from .schemas import (
 ENGINE = get_engine()
 # 领域适配器：运行时动态加载（domains/agent_task 为当前默认领域）
 ADAPTER = load_domain("agent_task", ENGINE)
+# 契约探测（P0-0）：启动时报告缺失方法，对应端点在请求时返 501 而不是 500
+_ADAPTER_MISSING_AT_BOOT = missing_methods(ADAPTER)
+if _ADAPTER_MISSING_AT_BOOT:
+    print(
+        f"[contract] 领域适配器 {getattr(ADAPTER, 'NAME', '?')} 未实现契约方法："
+        f"{', '.join(_ADAPTER_MISSING_AT_BOOT)}（对应端点将返回 501）",
+        file=sys.stderr,
+    )
 # 引擎加载时刻（reload 时更新；REQ-03 health 字段）
 ENGINE_LOADED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -92,6 +102,26 @@ def _require_default_ontology():
             status_code=400,
             detail="当前为通用模式（已加载自定义本体），领域推理仅默认本体可用；"
                    "图谱/物化/SPARQL 等通用能力不受影响。重启服务可恢复默认本体。",
+        )
+
+
+def _require_capability(capability: str):
+    """领域端点门禁（P0-0）：适配器契约缺失返 501，能力未声明返 400。
+
+    契约见 reasoner/protocol.py。此前的行为是直接调用方法——
+    领域漏实现时抛 AttributeError → 500，错误信息对集成方毫无指引。
+    """
+    missing = missing_methods(ADAPTER)
+    if capability in missing:
+        raise HTTPException(
+            status_code=501,
+            detail=f"当前领域「{getattr(ADAPTER, 'NAME', '?')}」未实现契约方法 "
+                   f"{capability}；缺失清单：{', '.join(missing)}",
+        )
+    if not supports(ADAPTER, capability):
+        raise HTTPException(
+            status_code=400,
+            detail=f"当前领域「{getattr(ADAPTER, 'NAME', '?')}」未声明能力 {capability}",
         )
 
 
@@ -138,6 +168,11 @@ def health():
         "loaded_at": ENGINE_LOADED_AT,
         "reasoner": "OWL 2 RL (owlrl) + 业务规则 R2/R4",
         "domain": ADAPTER.NAME,
+        # P0-0 契约探针：空列表 = 适配器实现了全部框架要求的方法
+        "contract": {
+            "missing": missing_methods(ADAPTER),
+            "declared": list(getattr(ADAPTER, "CAPABILITIES", [])) or None,
+        },
         "dirty": ADAPTER.change_count > 0,
         "pending_changes": ADAPTER.change_count,
         "changelog": ADAPTER.changelog[-5:],
@@ -158,6 +193,7 @@ def health():
 @app.get("/api/ontology")
 def ontology():
     _require_default_ontology()
+    _require_capability("graph_export")
     return ADAPTER.graph_export()
 
 
@@ -165,10 +201,13 @@ def ontology():
 def reason(req: ReasonRequest):
     _require_default_ontology()
     if req.type == "capability_match":
+        _require_capability("capability_match")
         return ADAPTER.capability_match(_uri(req.task))
     if req.type == "orchestrate":
+        _require_capability("orchestrate")
         return ADAPTER.orchestrate(_uri(req.task))
     if req.type == "assign":
+        _require_capability("assign")
         return ADAPTER.assign(_uri(req.task), _uri(req.agent), persist=req.persist)
     raise HTTPException(status_code=400, detail=f"不支持的推理类型: {req.type}")
 
@@ -176,6 +215,7 @@ def reason(req: ReasonRequest):
 @app.post("/api/classify")
 def classify(req: ClassifyRequest):
     _require_default_ontology()
+    _require_capability("classify")
     return ADAPTER.classify(req.name, req.capabilities, req.constraints,
                             req.risk_level, persist=req.persist)
 
@@ -183,12 +223,14 @@ def classify(req: ClassifyRequest):
 @app.post("/api/explain")
 def explain():
     _require_default_ontology()
+    _require_capability("explain")
     return ADAPTER.explain()
 
 
 @app.post("/api/consistency")
 def consistency():
     _require_default_ontology()
+    _require_capability("consistency")
     return ADAPTER.consistency()
 
 
