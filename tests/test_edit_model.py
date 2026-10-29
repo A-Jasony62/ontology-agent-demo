@@ -51,11 +51,12 @@ def restore_engine():
     yield
     with open(E.ONTO_PATH, "wb") as f:
         f.write(backup)  # 恢复磁盘默认本体
+    # 恢复运行态：领域本体重建 + 适配器重建（引擎单例 / 模块快照一并同步）。
+    # 只改 M.ENGINE / M.ADAPTER 是不够的——P2 起真相源是 M.DOMAINS，
+    # 不恢复它的话后续测试仍在"通用模式"下跑（status.mode=generic、无 R2 推理）。
     E._engine = None
-    new = E.get_engine()
-    M.ENGINE = new
-    from domains import load_domain
-    M.ADAPTER = load_domain("agent_task", new)
+    M.DOMAINS.reload_ontology()
+    M._sync_runtime(force=True)
 
 
 # ---------- 编辑模型提取 ----------

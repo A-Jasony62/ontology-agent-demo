@@ -17,6 +17,8 @@
 - **`reasoner/cq/`（P1-3）**：CQ 出题、质检与 TBox 草稿 L1-L5 校验上移为通用工位；框架自带领域中立 `default_prompts.json`，领域 `cq_prompts.json` 与其深合并（只写差异即可）
 - **`reasoner/plugin.py`（P1-4）**：`PluginContext` 门面——引擎 / 包目录 / 配置 / 原语 / ABox 工厂 / 日志一次性交付。加载器优先 `create_adapter_ctx(ctx)`，退回旧的 `create_adapter(engine, config)`
 - **`examples/_minimal/`（P1-5）**：零复制验收物——1 个 owl + 4 行 config + 一个只继承不实现的适配器，证明新领域不必复制 `agent_task` 任何一行
+- **领域热切换（P2）：`domains/manager.py` + 三个端点**——`GET /api/domains`（已安装领域 + 当前）、`POST /api/domains/reload`（L2 同包重载：重读领域代码）、`POST /api/domains/{name}/activate`（L3 跨包切换）。切换一律**先构造后替换**：构造失败旧领域继续服务并返回 400，不会停在半个领域上；成功后同步 `reasoner.engine` 单例，避免"领域换了但通用查询还查旧图"
+- **`scripts/query.py --domain <name>`**：CLI 不再硬编码 `agent_task`，领域与本体路径由运行态配置解析（与 API / MCP 同一套判据）
 - **`domains` 加载器支持任意路径**：`spec_from_file_location` + `submodule_search_locations` 构造合法包，包内相对导入保持有效；同路径复用避免类身份分裂，`reload=True` 整包重建且失败回滚
 
 ### Changed
@@ -25,7 +27,9 @@
 - **默认领域不再写死**：`api/main.py` 与 `mcp/mcp_server.py` 均按配置解析默认领域（`--domain` / `--domains-root` 可覆盖），REST API 换领域无需改源码；`reasoner.engine.ONTO_PATH` 改为 import 时按配置解析（包内 `config.json` 的 `onto_file` → 包内唯一 `*.owl` → 历史路径兜底）
 - **`mcp/policy.py`、`mcp/tool_guard.py`、`reasoner/pipeline_gate.py` 的领域目录改为按配置解析**，不再硬编码仓库下的 `domains/`
 - **SHACL 形状文件定位**：`examples/agent_task/mcp.py` 由"上溯三级"改为 环境变量 `ONTOLOGY_SHAPES_FILE` → 包内 `SHAPES_FILE` 声明 → 包内 `shapes/*.ttl` → 历史布局，领域包安装到任意 root 后仍可用
-- 后端测试 178 → 236 → 290 项；`tests/conftest.py` 以进程内别名兼容旧导入，未安装时自动以临时副本运行（干净检出可直接跑，且不写脏 `examples/`）
+- 后端测试 178 → 236 → 290 → 308 项；`tests/conftest.py` 以进程内别名兼容旧导入，未安装时自动以临时副本运行（干净检出可直接跑，且不写脏 `examples/`）
+- **能力门禁与契约同源（P2-4）**：`/api/reason` 由 `if/elif` 枚举改为 `REASON_KINDS` 表驱动，支持清单 = 表键 ∩ 领域 `CAPABILITIES`；门禁判据改用 `undeclared_missing`——只声明部分能力的领域调未声明能力返 **400（未声明）** 而非 501（契约破损），501 只留给"声明了却没实现"
+- **`/api/health` 不再假设领域形状**：`agents` / `tasks` / `capabilities` 等统计在领域没有对应方法/配置时给 0，而不是 500。此前它写死了 `agent_task` 的字段，切到最小领域即崩
 - **领域包的导入面收敛**：只 import `reasoner.plugin`（门面）与 `reasoner.cq`，不再 import `reasoner.engine` / `reasoner.semantic` / `reasoner.derivation` / `reasoner.abox`；由 `tests/test_plugin.py` 的 ast 扫描断言守住
 - `agent_task` 适配器从 1391 行降到 591 行（ABox 205 行、CQ 502 行上移框架后）
 

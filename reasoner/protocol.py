@@ -263,6 +263,25 @@ class AdapterBase:
     last_query_kind: str | None = None
     last_derivation: list = []
 
+    # 变更状态的"无持久化"默认语义（P2）：/api/health 是运维探针，任何领域
+    # 都得能查。没有 ABox 写入能力的领域（如 examples/_minimal）不能因为
+    # 查 change_count 就让整个 health 端点 500——它只是从未变更过而已。
+    @property
+    def change_count(self) -> int:
+        return 0
+
+    @property
+    def changelog(self) -> list:
+        return []
+
+    @property
+    def last_commit(self) -> str | None:
+        return None
+
+    @property
+    def assignments(self) -> dict:
+        return {}
+
     def explain(self) -> dict:
         """最近一次查询的推导链（默认实现，子类可覆盖）。"""
         return default_explain(self)

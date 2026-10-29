@@ -3,7 +3,7 @@
 架构：通用引擎（reasoner.engine，与本体无关） + 领域适配器（domains/，运行时动态加载）。
 
 端点一览：
-    领域层（domains/agent_task 适配器，默认绑定「智能体任务编排」本体）：
+    领域层（适配器由运行态配置决定，不再绑定某个具体领域）：
         GET  /                 前端 Demo 页面（图谱展示）
         GET  /api/health       健康检查
         GET  /api/ontology     本体结构（图谱渲染数据）
@@ -11,6 +11,10 @@
         POST /api/classify     新增任务个体并自动分类
         POST /api/explain      最近一次推理的推导链
         POST /api/consistency  一致性 / 合规冲突检查
+    领域管理（P2：热切换，领域层端点随当前领域变化）：
+        GET  /api/domains                 已安装领域 + 当前领域
+        POST /api/domains/reload          L2 同包重载（领域代码改了）
+        POST /api/domains/{name}/activate L3 跨包切换（失败则旧领域继续服务）
     通用层（引擎直接提供，与本体定义无关，任意 .owl 可用）：
         POST /api/query        SPARQL 查询
         POST /api/individuals  指定类的个体列表
@@ -31,9 +35,8 @@
 
 import hashlib
 import os
-import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
@@ -54,38 +57,48 @@ class LazyStaticFiles(StaticFiles):
     async def check_config(self) -> None:
         pass
 
-import reasoner.engine as engine_mod
 from reasoner.engine import get_engine, OntologyEngine
-from reasoner.protocol import missing_methods, supports
-from domains import get_config, load_domain
+from reasoner.protocol import supports, undeclared_missing
+from domains import DomainManager, DomainContractError, DomainNotFoundError
 from .schemas import (
     ReasonRequest, ClassifyRequest, RevokeRequest, ImportRequest,
     SparqlRequest, IndividualsRequest, TypesRequest, PropertyRequest,
     SaveOntologyRequest,
 )
 
-ENGINE = get_engine()
-# 领域适配器：领域名由配置决定（domain.json / 环境变量 / --domain），不再写死
-_DOMAIN_CONFIG = get_config()
-DOMAIN_NAME = _DOMAIN_CONFIG.effective_default()
-if DOMAIN_NAME is None:
-    raise RuntimeError(
-        f"未确定默认领域：{_DOMAIN_CONFIG.root} 下已安装 "
-        f"{_DOMAIN_CONFIG.installed() or '（空）'}。\n"
-        "请安装领域包：python scripts/ontologyctl.py domain install --from <path>；"
-        "或在 config/domain.json 里设置 domains.default。"
-    )
-ADAPTER = load_domain(DOMAIN_NAME, ENGINE)
-# 契约探测（P0-0）：启动时报告缺失方法，对应端点在请求时返 501 而不是 500
-_ADAPTER_MISSING_AT_BOOT = missing_methods(ADAPTER)
-if _ADAPTER_MISSING_AT_BOOT:
-    print(
-        f"[contract] 领域适配器 {getattr(ADAPTER, 'NAME', '?')} 未实现契约方法："
-        f"{', '.join(_ADAPTER_MISSING_AT_BOOT)}（对应端点将返回 501）",
-        file=sys.stderr,
-    )
-# 引擎加载时刻（reload 时更新；REQ-03 health 字段）
-ENGINE_LOADED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
+# 领域运行态：唯一真相源（名字、引擎、适配器、加载时刻都在里面）。
+DOMAINS = DomainManager(eager=True)
+
+
+# 模块级 ENGINE / ADAPTER 是 DOMAINS 的**请求级快照**：
+# 全文件 30 余处读点按普通全局名访问，靠每个请求进来时的一次 _sync_runtime()
+# 对齐。为什么不做成模块级 __getattr__ 动态属性：那依赖 CPython 在
+# LOAD_GLOBAL 未命中时回退调用 module.__getattr__ 的实现细节，而这里需要的是
+# "任何调用方（含 TestClient、脚本 import）都拿到一致的值"。显式同步只多一行，
+# 换来的是不依赖解释器行为。
+ENGINE = DOMAINS.engine
+ADAPTER = DOMAINS.adapter
+DOMAIN_NAME = DOMAINS.name
+ENGINE_LOADED_AT = DOMAINS.loaded_at
+
+
+_SYNCED_VERSION = -1
+
+
+def _sync_runtime(force: bool = False) -> None:
+    """把模块级快照对齐到 DOMAINS 的当前领域（每次请求进入时调用）。
+
+    按版本号判断是否需要刷新，而不是无条件覆盖：调用方（含测试）可能
+    临时替换过 ENGINE，无条件覆盖会把这些替换悄悄顶掉。
+    """
+    global ENGINE, ADAPTER, DOMAIN_NAME, ENGINE_LOADED_AT, _SYNCED_VERSION
+    if not force and _SYNCED_VERSION == DOMAINS.version:
+        return
+    ENGINE = DOMAINS.engine
+    ADAPTER = DOMAINS.adapter
+    DOMAIN_NAME = DOMAINS.name
+    ENGINE_LOADED_AT = DOMAINS.loaded_at
+    _SYNCED_VERSION = DOMAINS.version
 
 app = FastAPI(
     title="本体 × 智能体协作 Demo API",
@@ -98,6 +111,17 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
+@app.middleware("http")
+async def _domain_sync_middleware(request, call_next):
+    """每个请求进入时把 ENGINE / ADAPTER 快照对齐到当前领域。
+
+    放在中间件而不是每个端点里，是因为"忘记刷新"这种漏改不会有测试报错，
+    只会表现为"切换领域后某个端点还在用旧领域"——最难查的一类 bug。
+    """
+    _sync_runtime()
+    return await call_next(request)
+
+
 def _uri(name: str):
     if not name:
         raise HTTPException(status_code=400, detail="缺少参数：task / agent 不能为空")
@@ -105,12 +129,18 @@ def _uri(name: str):
 
 
 def _require_default_ontology():
-    """领域推理端点守卫：加载了自定义本体后进入通用模式，领域端点不可用。"""
-    if ENGINE.onto_path != engine_mod.ONTO_PATH:
+    """领域推理端点守卫：通用模式下（引擎不属于当前领域）领域端点不可用。
+
+    判据是**引擎实例同一性**而非路径相等（P2-3）：路径相同而实例不同，
+    说明本体被覆盖重写过、适配器还指着旧图；反过来路径不同（如另存后
+    又切回）也不该误判。实例同一性能同时覆盖这两种情形。
+    """
+    if not DOMAINS.in_domain_mode():
         raise HTTPException(
             status_code=400,
             detail="当前为通用模式（已加载自定义本体），领域推理仅默认本体可用；"
-                   "图谱/物化/SPARQL 等通用能力不受影响。重启服务可恢复默认本体。",
+                   "图谱/物化/SPARQL 等通用能力不受影响。"
+                   "可切换领域（POST /api/domains/{name}/activate）回到领域模式。",
         )
 
 
@@ -119,8 +149,13 @@ def _require_capability(capability: str):
 
     契约见 reasoner/protocol.py。此前的行为是直接调用方法——
     领域漏实现时抛 AttributeError → 500，错误信息对集成方毫无指引。
+
+    判据用 `undeclared_missing` 而不是 `missing_methods`（P2 修正）：
+    后者按全量 7 个方法检查，会让"只声明 graph_export 的最小领域"在调
+    capability_match 时拿到 501（契约破损）——但它明明在 CAPABILITIES 里
+    说过不提供，该给的是 400（未声明）。501 只在"声明了却没实现"时给。
     """
-    missing = missing_methods(ADAPTER)
+    missing = undeclared_missing(ADAPTER)
     if capability in missing:
         raise HTTPException(
             status_code=501,
@@ -148,7 +183,7 @@ def index():
 
 def _baseline_hash() -> str:
     """本体基线（核心 .owl + extensions/ 全部文件）内容哈希——两端一致性判据。"""
-    files = [engine_mod.ONTO_PATH]
+    files = [DOMAINS.current().onto_path]
     if ENGINE.extensions_dir and os.path.isdir(ENGINE.extensions_dir):
         files += [os.path.join(ENGINE.extensions_dir, f)
                   for f in sorted(os.listdir(ENGINE.extensions_dir))]
@@ -163,7 +198,37 @@ def _ontology_version() -> str:
     """本体版本：优先 owl:versionInfo，未配置时回退文件 mtime（REQ-03）。"""
     for obj in ENGINE.g.objects(None, OWL.versionInfo):
         return str(obj)
-    return datetime.fromtimestamp(os.path.getmtime(engine_mod.ONTO_PATH)).isoformat(timespec="seconds")
+    return datetime.fromtimestamp(
+        os.path.getmtime(DOMAINS.current().onto_path)
+    ).isoformat(timespec="seconds")
+
+
+def _count(method: str) -> int:
+    """领域可选统计：领域没有这个方法时给 0，而不是让 /api/health 500。
+
+    health 是运维探针，切换领域后它必须还能查。agents() / tasks() 是
+    agent_task 的领域方法而非契约方法，只声明 graph_export 的最小领域
+    没有它们——这不是错误，是"该领域没有这类个体"。
+    """
+    fn = getattr(ADAPTER, method, None)
+    if not callable(fn):
+        return 0
+    try:
+        return len(fn())
+    except Exception:  # noqa: BLE001 —— 探针端点不因某个统计失败而整体失败
+        return 0
+
+
+def _class_count(field: str) -> int:
+    """按语义配置统计某类个体；领域未配置该类时为 0。"""
+    c = getattr(ADAPTER, "c", None)
+    name = getattr(c, field, None)
+    if not name:
+        return 0
+    try:
+        return len(ADAPTER.engine.individuals_of(name))
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 @app.get("/api/health")
@@ -172,28 +237,28 @@ def health():
     # 新增 REQ-03 字段：version / loaded_at / dirty / pending_changes / changelog / counts
     return {
         "status": "ok",
-        "ontology": "agent_task_ontology.owl",
+        "ontology": os.path.basename(ENGINE.onto_path),
         "version": _ontology_version(),
         "loaded_at": ENGINE_LOADED_AT,
         "reasoner": "OWL 2 RL (owlrl) + 业务规则 R2/R4",
         "domain": ADAPTER.NAME,
         # P0-0 契约探针：空列表 = 适配器实现了全部框架要求的方法
         "contract": {
-            "missing": missing_methods(ADAPTER),
-            "declared": list(getattr(ADAPTER, "CAPABILITIES", [])) or None,
+            "missing": undeclared_missing(ADAPTER),
+            "declared": list(getattr(ADAPTER, "CAPABILITIES", []) or []) or None,
         },
         "dirty": ADAPTER.change_count > 0,
         "pending_changes": ADAPTER.change_count,
         "changelog": ADAPTER.changelog[-5:],
-        "agents": len(ADAPTER.agents()),
-        "tasks": len(ADAPTER.tasks()),
-        "assignments": len(ADAPTER.assignments),
+        "agents": _count("agents"),
+        "tasks": _count("tasks"),
+        "assignments": len(getattr(ADAPTER, "assignments", None) or {}),
         "counts": {
-            "agents": len(ADAPTER.agents()),
-            "tasks": len(ADAPTER.tasks()),
-            "capabilities": len(ADAPTER.engine.individuals_of(ADAPTER.c.capability_class)),
-            "constraints": len(ADAPTER.engine.individuals_of(ADAPTER.c.constraint_class)),
-            "assignments": len(ADAPTER.assignments),
+            "agents": _count("agents"),
+            "tasks": _count("tasks"),
+            "capabilities": _class_count("capability_class"),
+            "constraints": _class_count("constraint_class"),
+            "assignments": len(getattr(ADAPTER, "assignments", None) or {}),
             "inferred_triples": len(ENGINE.g) - len(ENGINE.raw),
         },
     }
@@ -206,19 +271,30 @@ def ontology():
     return ADAPTER.graph_export()
 
 
+# 推理类型 → 领域方法调用（P2-4：能力表驱动）。
+# 此前是 if/elif 枚举：加一种推理类型要改端点、改门禁、改文档三处，
+# 且"当前领域支持哪些类型"散落在分支里无法回答。改成表之后，
+# 支持清单 = 表的键 ∩ 领域 CAPABILITIES，错误消息可以直接给出。
+REASON_KINDS = {
+    "capability_match": lambda a, req: a.capability_match(_uri(req.task)),
+    "orchestrate": lambda a, req: a.orchestrate(_uri(req.task)),
+    "assign": lambda a, req: a.assign(_uri(req.task), _uri(req.agent), persist=req.persist),
+}
+
+
 @app.post("/api/reason")
 def reason(req: ReasonRequest):
     _require_default_ontology()
-    if req.type == "capability_match":
-        _require_capability("capability_match")
-        return ADAPTER.capability_match(_uri(req.task))
-    if req.type == "orchestrate":
-        _require_capability("orchestrate")
-        return ADAPTER.orchestrate(_uri(req.task))
-    if req.type == "assign":
-        _require_capability("assign")
-        return ADAPTER.assign(_uri(req.task), _uri(req.agent), persist=req.persist)
-    raise HTTPException(status_code=400, detail=f"不支持的推理类型: {req.type}")
+    kind = REASON_KINDS.get(req.type)
+    if kind is None:
+        supported = sorted(set(REASON_KINDS) & set(getattr(ADAPTER, "CAPABILITIES", None) or ()))
+        raise HTTPException(
+            status_code=400,
+            detail=(f"不支持的推理类型: {req.type}；"
+                    f"当前领域「{getattr(ADAPTER, 'NAME', '?')}」支持：{supported or '（无）'}"),
+        )
+    _require_capability(req.type)
+    return kind(ADAPTER, req)
 
 
 @app.post("/api/classify")
@@ -284,7 +360,6 @@ def infer():
 @app.post("/api/ontology/load")
 async def load_ontology(file: UploadFile = File(...)):
     """上传 .owl/.rdf 并加载到推理引擎（进入通用模式，领域推理降级）。"""
-    global ENGINE
     filename = (file.filename or "").lower()
     if not filename.endswith((".owl", ".rdf", ".xml")):
         raise HTTPException(status_code=400, detail="仅支持 .owl / .rdf / .xml 文件")
@@ -292,8 +367,8 @@ async def load_ontology(file: UploadFile = File(...)):
     try:
         dest.write_bytes(await file.read())
         engine = get_engine(str(dest))
-        # 同步模块级单例引用：后续通用端点（查询/物化/源码）指向新本体
-        ENGINE = engine
+        # 领域不换，只换对外服务的引擎 → 进入通用模式（领域端点自动 400）
+        DOMAINS.use_engine(engine)
     except Exception as exc:
         dest.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"本体加载失败：{exc}")
@@ -362,7 +437,6 @@ def save_ontology(req: SaveOntologyRequest):
     mode=new    另存到 data/uploads/（进入通用模式，领域推理降级）；
     mode=overwrite  覆盖当前已加载本体（默认本体覆盖后领域推理保留）。
     """
-    global ENGINE, ADAPTER
     try:
         content = ENGINE.model_to_rdf(req.model.model_dump())
     except ValueError as exc:
@@ -393,11 +467,12 @@ def save_ontology(req: SaveOntologyRequest):
         target.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"保存后加载失败（已回滚文件）：{exc}")
 
-    engine_mod._engine = new_engine
-    ENGINE = new_engine
-    if new_engine.onto_path == engine_mod.ONTO_PATH:
-        # 覆盖默认本体：重建领域适配器，R1–R4 领域推理保留
-        ADAPTER = load_domain("agent_task", new_engine)
+    if new_engine.onto_path == DOMAINS.current().onto_path:
+        # 覆盖默认本体：重建领域适配器（引擎 + 适配器一起换），领域推理保留
+        DOMAINS.rebind(new_engine)
+    else:
+        # 另存到 uploads/：只换服务引擎，领域端点降级为通用模式
+        DOMAINS.use_engine(new_engine)
 
     materialized = new_engine.materialized()
     return {
@@ -436,22 +511,17 @@ def download_ontology(name: str):
 def reload_ontology():
     """热重载（REQ-01.1）：重新加载核心 + extensions/ 全部增量并推理。
 
-    原子性：新引擎构造 + 推理全部成功后才替换模块级 ENGINE / 重建 ADAPTER；
-    失败返回 400，旧状态继续可用（Python 全局引用替换即原子，在途查询不受影响）。
+    原子性：新引擎构造 + 推理全部成功后才替换运行态；失败返回 400，
+    旧状态继续可用（替换是整体句柄替换，在途查询不受影响）。
     """
-    global ENGINE, ADAPTER, ENGINE_LOADED_AT
     import time as _time
     t0 = _time.monotonic()
     try:
-        new_engine = OntologyEngine(onto_path=engine_mod.ONTO_PATH,
-                                    extensions_dir=ENGINE.extensions_dir)
-    except Exception as exc:
+        handle = DOMAINS.reload_ontology()
+    except (DomainContractError, ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=f"重载失败（旧状态保持可用）：{exc}")
     elapsed = round((_time.monotonic() - t0) * 1000, 2)
-    # 全部成功 → 原子替换
-    ENGINE = new_engine
-    ADAPTER = load_domain("agent_task", new_engine)
-    ENGINE_LOADED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    new_engine = handle.engine
     return {
         "status": "ok",
         "loaded": os.path.basename(new_engine.onto_path),
@@ -459,6 +529,44 @@ def reload_ontology():
         "individuals": len(set(new_engine.g.subjects(RDF.type, OWL.NamedIndividual))),
         "elapsed_ms": elapsed,
     }
+
+
+# ---------------- 领域管理（P2：列表 / 重载 / 切换） ----------------
+
+@app.get("/api/domains")
+def list_domains_endpoint():
+    """已安装领域 + 当前领域（给工作台的领域下拉与运维排查用）。"""
+    return DOMAINS.info()
+
+
+@app.post("/api/domains/reload")
+def reload_domain():
+    """L2 同包重载：重读领域代码（adapter.py / config.json）+ 重建引擎。
+
+    与 `/api/ontology/reload`（L1，只重载本体内容）的区别：
+    改了领域 Python 代码必须用这个端点，L1 不会重新执行包代码。
+    """
+    try:
+        handle = DOMAINS.reload()
+    except (DomainContractError, DomainNotFoundError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=f"领域重载失败（旧领域保持可用）：{exc}")
+    return {"status": "ok", "domain": handle.name, "loaded_at": handle.loaded_at,
+            "triples": len(handle.engine.g)}
+
+
+@app.post("/api/domains/{name}/activate")
+def activate_domain(name: str):
+    """L3 跨包切换：切到 root 下另一个已安装领域。
+
+    失败（领域不存在 / 契约不满足 / 本体加载失败）一律 400，
+    **旧领域继续服务**——切换不是"先拆后装"，而是"装好了再换"。
+    """
+    try:
+        handle = DOMAINS.activate(name)
+    except (DomainContractError, DomainNotFoundError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=f"切换领域失败（当前领域保持可用）：{exc}")
+    return {"status": "ok", "domain": handle.name, "loaded_at": handle.loaded_at,
+            "capabilities": handle.capabilities, "triples": len(handle.engine.g)}
 
 
 @app.get("/api/ontology/status")
@@ -470,15 +578,15 @@ def ontology_status():
     （MCP 端由只读 status 工具 / CLI 探测，见批次二文档）。
     """
     return {
-        "ontology": os.path.basename(engine_mod.ONTO_PATH),
-        "mode": "default" if ENGINE.onto_path == engine_mod.ONTO_PATH else "generic",
+        "ontology": os.path.basename(ENGINE.onto_path),
+        "mode": "default" if DOMAINS.in_domain_mode() else "generic",
         "extensions_dir": ENGINE.extensions_dir,
         "baseline_file_hash": _baseline_hash(),
         "dirty": ADAPTER.change_count > 0,
         "pending_changes": ADAPTER.change_count,
         "changelog": ADAPTER.changelog[-5:],
         "last_commit": ADAPTER.last_commit,
-        "assignments": len(ADAPTER.assignments),
+        "assignments": len(getattr(ADAPTER, "assignments", None) or {}),
         "loaded_at": ENGINE_LOADED_AT,
     }
 

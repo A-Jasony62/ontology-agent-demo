@@ -58,6 +58,7 @@ __all__ = [
     "list_domains",
     "load_domain",
     "load_domain_module",
+    "package_onto_path",
     "refresh_config",
 ]
 
@@ -303,23 +304,21 @@ def _declared_onto(ddir: Path) -> str | None:
     return str(target) if target.is_file() else None
 
 
-def default_onto_path() -> str | None:
-    """配置默认领域的核心本体路径（**不执行领域代码**）。
+def package_onto_path(
+    name: str,
+    *,
+    settings: DomainConfig | None = None,
+    root: str | Path | None = None,
+) -> str | None:
+    """单个领域包的核心本体路径（**不执行领域代码**）。
 
-    供 reasoner.engine 解析 ONTO_PATH 的引导值。engine 是通用层，不能
-    import 领域适配器——adapter 会反向 `from reasoner.engine import local`，
-    形成循环导入。所以这里只做路径级解析：
-
+    解析顺序：
       1. 领域包 config.json 的 `onto_file`（显式声明，优先）
       2. 包内唯一的 *.owl（约定：一个领域一个核心本体）
 
-    两者都拿不到时返回 None，由调用方兜底并给出可读的错误。
+    拿不到时返回 None，由调用方兜底并给出可读的错误。
     """
-    cfg = get_config()
-    name = cfg.effective_default()
-    if not name:
-        return None
-    ddir = cfg.domain_dir(name)
+    ddir = _package_dir(name, settings, root)
     if not ddir.is_dir():
         return None
     declared = _declared_onto(ddir)
@@ -329,3 +328,17 @@ def default_onto_path() -> str | None:
         p for p in ddir.glob("*.owl") if not p.name.startswith(".")
     )
     return str(owls[0].resolve()) if len(owls) == 1 else None
+
+
+def default_onto_path() -> str | None:
+    """配置默认领域的核心本体路径（**不执行领域代码**）。
+
+    供 reasoner.engine 解析 ONTO_PATH 的引导值。engine 是通用层，不能
+    import 领域适配器——adapter 会反向 `from reasoner.engine import local`，
+    形成循环导入。所以这里只做路径级解析，逻辑与 package_onto_path 同源。
+    """
+    cfg = get_config()
+    name = cfg.effective_default()
+    if not name:
+        return None
+    return package_onto_path(name, settings=cfg)

@@ -31,7 +31,8 @@ import sys
 # ---------- 路径 ----------
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPTS_DIR)   # 仓库根目录
-ONTO_FILE = os.path.join(ROOT_DIR, "domains", "agent_task", "agent_task_ontology.owl")
+# 本体路径不再写死：由运行态配置（domains.root + default）解析，
+# 与 API / MCP 用同一套判据——否则 CLI 会悄悄查另一个领域的本体。
 
 API_BASE = os.environ.get("DOUBAO_API_BASE", "http://127.0.0.1:8000").rstrip("/")
 
@@ -83,28 +84,28 @@ def http_query(kind: str, args) -> dict:
 
 
 # ---------- 内嵌引擎通道（零服务依赖） ----------
-_E = None
-_A = None
+_M = None
+
+
+def _manager():
+    """领域运行态：默认领域由配置决定，可用 --domain 覆盖。"""
+    global _M
+    if _M is None:
+        sys.path.insert(0, ROOT_DIR)
+        from domains import DomainManager
+
+        _M = DomainManager()
+    return _M
 
 
 def _engine():
     # 直接使用仓库内通用引擎（reasoner/engine.py，单一事实源）
-    global _E
-    if _E is None:
-        sys.path.insert(0, ROOT_DIR)
-        from reasoner.engine import OntologyEngine
-        _E = OntologyEngine(onto_path=ONTO_FILE)
-    return _E
+    return _manager().engine
 
 
 def _adapter():
-    # 领域适配器：domains/ 动态加载（与服务端同一套代码）
-    global _A
-    if _A is None:
-        sys.path.insert(0, ROOT_DIR)
-        from domains import load_domain
-        _A = load_domain("agent_task", _engine())
-    return _A
+    # 领域适配器：动态加载（与服务端同一套代码）
+    return _manager().adapter
 
 
 def local_query(kind: str, args) -> dict:
@@ -143,7 +144,9 @@ def local_query(kind: str, args) -> dict:
 
 # ---------- 入口 ----------
 def main() -> int:
-    parser = argparse.ArgumentParser(description="调用「智能体任务编排」本体的推理引擎")
+    parser = argparse.ArgumentParser(description="调用领域本体的推理引擎（领域由运行态配置决定）")
+    parser.add_argument("--domain", default=None,
+                        help="领域包标识（缺省取配置 domains.default；需写在子命令之前）")
     sub = parser.add_subparsers(dest="kind", required=True)
 
     for name in ("capability_match", "orchestrate"):
@@ -216,6 +219,8 @@ def main() -> int:
 
     args = parser.parse_args()
     kind = args.kind
+    if args.domain:
+        _manager().activate(args.domain)     # 显式指定领域：只加载它，不碰默认
     force_http = args.http and not args.local
 
     if force_http:
