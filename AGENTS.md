@@ -1,11 +1,12 @@
 # AGENTS.md
 
-Chinese-language ontology × agent demo: a domain-agnostic OWL 2 RL engine (`reasoner/`) + the `agent_task` domain plugin (`domains/`) + FastAPI (`api/`) + a separate MCP server (`mcp/`) + a React/Vite workbench (`frontend/app/`). Keep docs, comments, and user-facing strings in Chinese; match the existing style.
+Chinese-language ontology × agent demo: a domain-agnostic OWL 2 RL engine (`reasoner/`) + a domain plugin system (sample in `examples/agent_task/`, runtime packages under the configured root, default `domains/`) + FastAPI (`api/`) + a separate MCP server (`mcp/`) + a React/Vite workbench (`frontend/app/`). Keep docs, comments, and user-facing strings in Chinese; match the existing style.
 
 ## Layout boundaries
 
-- `reasoner/` must stay free of domain vocabulary (`Agent`, `Task`, `can_execute`). Domain rules, config, and MCP tools live in `domains/<name>/`; the plugin contract is `NAME`, `DESCRIPTION`, `create_adapter(engine, config)`, plus `ONTO_FILE` and `mcp.register_tools` for MCP domains. `domains/registry.py` discovers packages at runtime.
-- `api/main.py` hardcodes `agent_task`. A new domain is reachable through `mcp/mcp_server.py --domain <name>` without code changes, but not through the REST API unless `api/main.py` is updated.
+- `reasoner/` must stay free of domain vocabulary (`Agent`, `Task`, `can_execute`). Domain rules, config, and MCP tools live in a domain package; the plugin contract is `NAME`, `DESCRIPTION`, `create_adapter(engine, config)`, plus `ONTO_FILE`, optional `CAPABILITIES` / `SHAPES_FILE`, and `mcp.register_tools` for MCP domains. The contract is declared in `reasoner/protocol.py` (`AdapterProtocol`, 7 methods); missing methods make the endpoint return 501, not 500.
+- Layout: `examples/<name>/` is what ships with the repo (a read-only template); `domains/` is the runtime root and is gitignored. `python scripts/ontologyctl.py domain install --from <path>` copies a package into the runtime root. Domain root and default domain come from `config/domain.json` (gitignored, copy from `config/domain.example.json`), overridable by `ONTOLOGY_DOMAINS_ROOT` / `ONTOLOGY_DOMAIN` or `--domains-root` / `--domain`.
+- Neither `api/main.py` nor `mcp/mcp_server.py` names a domain any more: both resolve the default via config and load through `domains.registry`. `reasoner.engine.ONTO_PATH` is resolved at import time from the configured default domain (`default_onto_path()`: package `config.json` `onto_file` → unique `*.owl` → legacy path), so `reasoner` never imports a domain adapter (that would be circular).
 - Domain display names come from `rdfs:label` in the OWL file; do not duplicate them in `config.json`. Property names default to ontology short names (`config.json` only overrides them).
 - `frontend/app/` is the real UI. `frontend/app/dist/` is gitignored and built by `npm run build` or the Docker frontend stage; it is not committed.
 - `pipeline/gates.json` + `pipeline/shapes/<domain>.ttl` configure G1–G4 gates; `docs/MODELING_PIPELINE.md` is the authoritative gate spec, `reasoner/pipeline_gate.py` the implementation.
@@ -23,7 +24,7 @@ bash scripts/start.sh      # venv + deps + API + open browser
 - The Makefile hardcodes `.venv/bin/*`; run commands from the repo root. Backend tests need no running server or network.
 - Single backend test: `.venv/bin/python -m pytest tests/test_reasoning.py -k r1 -q`.
 - Frontend (from `frontend/app/`): `npm ci`, `npm run typecheck`, `npm run test`, `npm run build` (build includes typecheck). Single vitest file: `npx vitest run src/store/editorStore.test.ts`.
-- Current suites: 178 backend tests, 68 frontend tests. Counts in README/CONTRIBUTING are stale; trust `pytest`/`vitest` output.
+- Current suites: 236 backend tests, 68 frontend tests. Counts in README/CONTRIBUTING are stale; trust `pytest`/`vitest` output.
 - No backend linter/formatter/typechecker is configured; do not invent one. CI is pytest on Python 3.10–3.12 plus a Node 20 frontend job. The local `.venv` is Python 3.14; `make docs` cannot install mkdocs there (no watchdog wheel), so doc builds are verified in CI on 3.12.
 - `scripts/query.py` is HTTP-first with `--local` fallback; `scripts/query.py` and `scripts/ontologyctl.py` read `DOUBAO_API_BASE` (default `http://127.0.0.1:8000`).
 
@@ -34,9 +35,10 @@ bash scripts/start.sh      # venv + deps + API + open browser
 - Loading or saving a new ontology switches the API to generic mode: domain endpoints (`/api/reason`, `/api/classify`, `/api/ontology`, etc.) return 400, while generic query/materialized/source/export endpoints still work. `POST /api/ontology/reload` always rebuilds from the default core `.owl`, so it also exits generic mode.
 - `reasoner.engine.get_engine()` is a process-wide singleton keyed by `(onto_path, extensions_dir)`; passing a different path replaces the shared engine. `api/main.py` holds mutable module globals `ENGINE`/`ADAPTER` and also reassigns `reasoner.engine._engine`; reference `api.main.ENGINE` dynamically instead of `from api.main import ENGINE`, and rebind both when swapping the default ontology.
 - `mcp/` shadows the PyPI `mcp` SDK package. Sibling modules (`policy.py`, `tool_guard.py`) are loaded via `importlib` in `mcp/mcp_server.py`; do not switch that to `from mcp import policy`.
-- Tests are not fully sandboxed: `test_reload.py` temporarily writes `.ttl` files into the real `domains/agent_task/extensions/`, `test_edit_model.py` overwrites and restores the real core `.owl`, and save tests write to gitignored `data/uploads/`. Do not run the suite in parallel with a server using `--watch`/`--reload`; if a run is interrupted, inspect `git status` and clean leftovers.
+- Tests: `tests/conftest.py` aliases the domain package as `domains.<name>` in-process (no on-disk shim), so `from domains.agent_task import ...` still resolves. If the runtime root has no domain installed, it copies `examples/agent_task` to a temp root and points `ONTOLOGY_DOMAINS_ROOT` there — a clean checkout can run the suite, and writes land in the copy. When a domain *is* installed, the suite still writes into the real runtime root (`test_reload.py` adds `.ttl` into `<root>/agent_task/extensions/`, `test_edit_model.py` overwrites and restores the core `.owl`), so do not run it in parallel with a server using `--watch`/`--reload`.
+- Persistence is no longer git-tracked by default: `persist=true` writes go to `<runtime root>/agent_task/extensions/*.ttl`, and `domains/*/` is gitignored. Anything that must be versioned belongs in `examples/` (or a dedicated tracked location) — `scripts/ontologyctl.py` paths that `git add domains/...` need review before use.
 - `scripts/build_ontology.py` regenerates the core `agent_task_ontology.owl` from Python definitions. It does not merge API/Protégé edits back, so rerunning it discards those edits; `--clean` only leaves `extensions/` untouched.
-- Persisted changes (`persist=true`) go to `domains/agent_task/extensions/*.ttl` (git-tracked domain assets) or `data/uploads/` (gitignored); `backups/` is gitignored. Keep new tests isolated with `tmp_path` like the existing ones.
+- `data/uploads/` (saved ontologies) and `backups/` are gitignored. Keep new tests isolated with `tmp_path` like the existing ones.
 
 ## Conventions
 

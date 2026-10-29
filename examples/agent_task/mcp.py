@@ -22,9 +22,43 @@ except ImportError:  # 依赖未装时工具返回诚实提示，不崩 server
     pyshacl = None
 
 SH = Namespace("http://www.w3.org/ns/shacl#")
-_SHAPES_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "pipeline", "shapes", "agent_task.ttl")
+
+# 领域包可声明形状文件（相对包目录或绝对路径）；None 表示按下列顺序自动解析
+SHAPES_FILE: str | None = None
+
+
+def _resolve_shapes_path() -> str:
+    """SHACL 形状文件位置。
+
+    解析顺序（越靠前越优先）：
+      1. 环境变量 ONTOLOGY_SHAPES_FILE（部署 / 测试显式指定）
+      2. 包内声明 SHAPES_FILE（新领域推荐，随领域包走）
+      3. 包内 shapes/*.ttl（单文件约定）
+      4. 历史布局：仓库根 pipeline/shapes/agent_task.ttl（上溯三级）
+
+    只保留第 4 条会在领域包被安装到任意 root 后失效
+    （上溯三级不再等于仓库根），所以前置了显式声明与包内约定。
+    """
+    env = os.environ.get("ONTOLOGY_SHAPES_FILE")
+    if env:
+        return env
+
+    pkg_dir = os.path.dirname(os.path.abspath(__file__))
+    if SHAPES_FILE:
+        return SHAPES_FILE if os.path.isabs(SHAPES_FILE) else os.path.join(pkg_dir, SHAPES_FILE)
+
+    local_shapes = os.path.join(pkg_dir, "shapes")
+    if os.path.isdir(local_shapes):
+        candidates = sorted(f for f in os.listdir(local_shapes) if f.endswith(".ttl"))
+        if len(candidates) == 1:
+            return os.path.join(local_shapes, candidates[0])
+
+    return os.path.join(
+        os.path.dirname(os.path.dirname(pkg_dir)), "pipeline", "shapes", "agent_task.ttl"
+    )
+
+
+_SHAPES_PATH = _resolve_shapes_path()
 
 
 def _constraint_name(comp) -> str:

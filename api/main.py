@@ -57,7 +57,7 @@ class LazyStaticFiles(StaticFiles):
 import reasoner.engine as engine_mod
 from reasoner.engine import get_engine, OntologyEngine
 from reasoner.protocol import missing_methods, supports
-from domains import load_domain
+from domains import get_config, load_domain
 from .schemas import (
     ReasonRequest, ClassifyRequest, RevokeRequest, ImportRequest,
     SparqlRequest, IndividualsRequest, TypesRequest, PropertyRequest,
@@ -65,8 +65,17 @@ from .schemas import (
 )
 
 ENGINE = get_engine()
-# 领域适配器：运行时动态加载（domains/agent_task 为当前默认领域）
-ADAPTER = load_domain("agent_task", ENGINE)
+# 领域适配器：领域名由配置决定（domain.json / 环境变量 / --domain），不再写死
+_DOMAIN_CONFIG = get_config()
+DOMAIN_NAME = _DOMAIN_CONFIG.effective_default()
+if DOMAIN_NAME is None:
+    raise RuntimeError(
+        f"未确定默认领域：{_DOMAIN_CONFIG.root} 下已安装 "
+        f"{_DOMAIN_CONFIG.installed() or '（空）'}。\n"
+        "请安装领域包：python scripts/ontologyctl.py domain install --from <path>；"
+        "或在 config/domain.json 里设置 domains.default。"
+    )
+ADAPTER = load_domain(DOMAIN_NAME, ENGINE)
 # 契约探测（P0-0）：启动时报告缺失方法，对应端点在请求时返 501 而不是 500
 _ADAPTER_MISSING_AT_BOOT = missing_methods(ADAPTER)
 if _ADAPTER_MISSING_AT_BOOT:

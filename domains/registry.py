@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -42,6 +43,7 @@ from config import ConfigError, DomainConfig, load_config
 __all__ = [
     "DomainContractError",
     "DomainNotFoundError",
+    "default_onto_path",
     "get_config",
     "list_domains",
     "load_domain",
@@ -226,3 +228,55 @@ def list_domains(*, settings: DomainConfig | None = None) -> list[dict]:
             item["error"] = f"{type(exc).__name__}: {exc}"
         out.append(item)
     return out
+
+
+# ---------------------------------------------------------------- 引导路径
+
+
+def _declared_onto(ddir: Path) -> str | None:
+    """读领域包 config.json 的 onto_file（显式声明优先于约定）。"""
+    cfg_json = ddir / "config.json"
+    if not cfg_json.is_file():
+        return None
+    try:
+        data = json.loads(cfg_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    onto = data.get("onto_file") if isinstance(data, dict) else None
+    if not isinstance(onto, str) or not onto.strip():
+        return None
+    base = ddir.resolve()
+    target = (base / onto.strip()).resolve()
+    try:
+        target.relative_to(base)          # 拒绝 onto_file 把解析指到包外
+    except ValueError:
+        return None
+    return str(target) if target.is_file() else None
+
+
+def default_onto_path() -> str | None:
+    """配置默认领域的核心本体路径（**不执行领域代码**）。
+
+    供 reasoner.engine 解析 ONTO_PATH 的引导值。engine 是通用层，不能
+    import 领域适配器——adapter 会反向 `from reasoner.engine import local`，
+    形成循环导入。所以这里只做路径级解析：
+
+      1. 领域包 config.json 的 `onto_file`（显式声明，优先）
+      2. 包内唯一的 *.owl（约定：一个领域一个核心本体）
+
+    两者都拿不到时返回 None，由调用方兜底并给出可读的错误。
+    """
+    cfg = get_config()
+    name = cfg.effective_default()
+    if not name:
+        return None
+    ddir = cfg.domain_dir(name)
+    if not ddir.is_dir():
+        return None
+    declared = _declared_onto(ddir)
+    if declared:
+        return declared
+    owls = sorted(
+        p for p in ddir.glob("*.owl") if not p.name.startswith(".")
+    )
+    return str(owls[0].resolve()) if len(owls) == 1 else None

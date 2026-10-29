@@ -5,6 +5,7 @@
 
 新增导出：
     load_domain_module  返回模块本身（conftest 别名 / 需要包内子模块时）
+    default_onto_path   默认领域的核心本体路径（供 reasoner 引导解析）
     get_config          当前运行态配置（root / default / watch）
     refresh_config      重新读取配置
     DomainNotFoundError / DomainContractError  加载失败的明确分类
@@ -13,6 +14,7 @@
 from .registry import (
     DomainContractError,
     DomainNotFoundError,
+    default_onto_path,
     get_config,
     list_domains,
     load_domain,
@@ -23,6 +25,7 @@ from .registry import (
 __all__ = [
     "DomainContractError",
     "DomainNotFoundError",
+    "default_onto_path",
     "get_config",
     "list_domains",
     "load_domain",

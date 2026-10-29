@@ -9,8 +9,12 @@
     add_type / add_triple / add_literal / reparse / topological_sort
 
 领域语义（能力匹配 / 编排 / 分配合规 / 分类 / 图谱导出）不在本文件——
-由独立目录 domains/ 下的领域适配器在运行时动态加载（见 domains/__init__.py），
+由配置指定 root 下的领域适配器在运行时动态加载（默认 `domains/`，
+随仓库分发的示例在 `examples/`，见 domains/__init__.py），
 适配器把本引擎当作通用图 + 推理服务使用。
+
+引导路径：ONTO_PATH 在 import 时按运行态配置解析（见 `_resolve_onto_path`），
+因此“默认本体是哪个”由配置决定，本文件不含任何具体领域名词。
 """
 
 import os
@@ -19,9 +23,29 @@ from datetime import date
 from rdflib import Graph, Namespace, URIRef, Literal, BNode, RDF, RDFS, OWL
 import owlrl
 
-ONTO_PATH = os.path.abspath(
+_LEGACY_ONTO_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "domains", "agent_task", "agent_task_ontology.owl")
 )
+
+
+def _resolve_onto_path() -> str:
+    """按运行态配置解析默认领域本体。
+
+    只调用 `domains.registry.default_onto_path()`——它是纯路径解析，
+    不执行领域代码，因此不会与领域适配器（反向 import 本模块）形成循环。
+    解析不到时退回历史路径：宁可让 OntologyEngine 抛出"文件不存在"，
+    也不要让 `import reasoner.engine` 在配置缺失时直接失败。
+    """
+    try:
+        from domains.registry import default_onto_path
+
+        resolved = default_onto_path()
+    except Exception:  # noqa: BLE001 —— 引导路径不允许影响引擎可导入性
+        resolved = None
+    return resolved or _LEGACY_ONTO_PATH
+
+
+ONTO_PATH = _resolve_onto_path()
 DEFAULT_NS = "http://demo.example.org/agent-task-ontology#"
 NS = Namespace(DEFAULT_NS)  # 默认本体命名空间（兼容旧引用；实例请用 self.NS）
 
@@ -113,7 +137,10 @@ def _resolve_ns(onto_path: str, g: "Graph", use_xml_base: bool = True) -> str:
 class OntologyEngine:
     """通用本体引擎：加载 / 推理 / 查询 / 写图原语，与本体定义无关。"""
 
-    def __init__(self, onto_path: str = ONTO_PATH, extensions_dir: str | None = None, ns: str | None = None):
+    def __init__(self, onto_path: str | None = None, extensions_dir: str | None = None, ns: str | None = None):
+        # 缺省值在调用时取模块常量，而不是在 def 时冻结：
+        # 运行期切换领域（或测试里重定向运行态 root）才能生效
+        onto_path = onto_path or ONTO_PATH
         self.onto_path = onto_path
         # 扩展增量目录：默认取核心文件同目录的 extensions/（存在才启用）
         if extensions_dir is None:
@@ -691,13 +718,15 @@ class OntologyEngine:
 _engine = None
 
 
-def get_engine(onto_path: str = ONTO_PATH, extensions_dir: str | None = None, ns: str | None = None) -> OntologyEngine:
+def get_engine(onto_path: str | None = None, extensions_dir: str | None = None, ns: str | None = None) -> OntologyEngine:
     """共享单例（API / MCP / CLI 复用同一份加载与推理结果）。
 
-    缓存键 = (onto_path, extensions_dir)；extensions_dir 缺省由引擎按
-    "核心文件同目录 extensions/" 自动推导（api/main.py 等既有调用无需改动）。
+    缓存键 = (onto_path, extensions_dir)；onto_path 缺省取模块常量 ONTO_PATH
+    （由运行态配置解析而来），extensions_dir 缺省由引擎按
+    "核心文件同目录 extensions/" 自动推导。
     """
     global _engine
+    onto_path = onto_path or ONTO_PATH
     key = (onto_path, extensions_dir)
     if _engine is None or (_engine.onto_path, _engine.extensions_dir) != key:
         _engine = OntologyEngine(onto_path, extensions_dir=extensions_dir, ns=ns)

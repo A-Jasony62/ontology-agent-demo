@@ -5,7 +5,8 @@
   - 预定义查询：受控查询模板（{{param}} 占位），Agent 只能按名调用，渲染结果再复核谓词白名单；
   - **默认关闭**：无策略文件（SemanticPolicy 为 None）时出口层零开销直通原逻辑，逐字节兼容。
 
-策略文件放领域包 `domains/<name>/access_policy.json`（随领域走）；本模块无领域知识。
+策略文件放领域包 `<运行态 root>/<name>/access_policy.json`（随领域走，
+root 由 config 决定，默认 `domains/`、示例在 `examples/`）；本模块无领域知识。
 """
 
 from __future__ import annotations
@@ -16,7 +17,22 @@ import re
 
 from rdflib import URIRef, RDFS
 
-_DOMAINS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "domains")
+# None = 按运行态配置解析 root；测试可显式赋值为具体目录
+_DOMAINS_DIR: str | None = None
+
+
+def _domains_dir() -> str:
+    """领域包根目录：优先显式覆盖，否则取运行态配置（root 可被配置/环境变量改）。"""
+    if _DOMAINS_DIR:
+        return _DOMAINS_DIR
+    try:
+        from config import load_config
+
+        return str(load_config().root)
+    except Exception:  # noqa: BLE001 —— 配置不可用时退回历史位置，保持可诊断
+        return os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "domains"
+        )
 
 
 def _short(iri) -> str:
@@ -112,7 +128,7 @@ class SemanticPolicy:
 
 def load_policy(domain_name: str) -> SemanticPolicy | None:
     """从领域包加载 access_policy.json；文件不存在返回 None（策略关闭、逐字节兼容）。"""
-    path = os.path.join(_DOMAINS_DIR, domain_name, "access_policy.json")
+    path = os.path.join(_domains_dir(), domain_name, "access_policy.json")
     if not os.path.isfile(path):
         return None
     with open(path, encoding="utf-8") as f:

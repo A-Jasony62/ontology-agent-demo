@@ -36,7 +36,20 @@ from rdflib import OWL, RDF, RDFS, Graph, URIRef
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _GATES_PATH = os.path.join(_REPO_ROOT, "pipeline", "gates.json")
-_DOMAINS_DIR = os.path.join(_REPO_ROOT, "domains")
+
+
+def _domains_dir() -> str:
+    """领域包根目录：按运行态配置解析（默认 domains/，示例在 examples/）。
+
+    门禁的冒烟断言集随领域包走（`<root>/<domain>/gates_smoke.json`），
+    所以不能再用仓库根下的固定 domains/——换了 root 就找不到。
+    """
+    try:
+        from config import load_config
+
+        return str(load_config().root)
+    except Exception:  # noqa: BLE001 —— 配置不可用时退回历史位置
+        return os.path.join(_REPO_ROOT, "domains")
 
 _DEFAULT_GATES = ["G1", "G2", "G3", "G4"]
 GATE_NAMES = {
@@ -74,7 +87,7 @@ def _load_gates() -> dict:
 
 def _load_smoke(domain: str) -> dict:
     """加载领域冒烟断言集 domains/<domain>/gates_smoke.json；缺失返回空。"""
-    path = os.path.join(_DOMAINS_DIR, domain, "gates_smoke.json")
+    path = os.path.join(_domains_dir(), domain, "gates_smoke.json")
     try:
         with open(path, encoding="utf-8") as f:
             cfg = json.load(f)

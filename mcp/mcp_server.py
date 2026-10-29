@@ -61,7 +61,8 @@ if PROJECT_ROOT not in sys.path:
 from reasoner.engine import OntologyEngine
 from reasoner.pipeline_gate import run_gates
 from reasoner.proof import build_proof
-from domains import load_domain
+from config import load_config
+from domains import load_domain, load_domain_module
 from mcp.server.mcpserver import MCPServer
 
 # 本地受控语义策略与调用护栏（mcp/policy.py、mcp/tool_guard.py）。注：仓库的 mcp/ 目录
@@ -94,6 +95,8 @@ def build_server(get_engine, get_adapter, domain_name: str, description: str) ->
     )
 
     # 领域工具：动态加载领域包的 MCP 注册器（领域相关代码随领域包走）
+    # 先确保领域包已按配置 root 加载，再取子模块——领域包可能在 examples/ 或外部目录
+    load_domain_module(domain_name)
     mod = importlib.import_module(f"domains.{domain_name}.mcp")
     mod.register_tools(server, get_adapter)
 
@@ -262,8 +265,10 @@ def _run_server(server, transport: str, on_sighup, **kwargs):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="本体推理 MCP Server（内嵌引擎，领域工具随领域包动态加载）")
-    parser.add_argument("--domain", default="agent_task",
-                        help="领域包标识（domains/<name>，默认 agent_task）")
+    parser.add_argument("--domain", default=None,
+                        help="领域包标识（缺省取配置 domains.default；未配置且 root 下唯一时自动选用）")
+    parser.add_argument("--domains-root", default=None,
+                        help="领域包根目录（缺省取配置 domains.root）")
     parser.add_argument("--transport", choices=["stdio", "streamable-http"], default="streamable-http",
                         help="传输协议（默认 streamable-http，供豆包连接器；stdio 供本地 Client）")
     parser.add_argument("--host", default="127.0.0.1")
@@ -275,15 +280,23 @@ def main() -> int:
                         help="文件监听轮询间隔（秒，默认 2）")
     args = parser.parse_args()
 
-    # 领域包自声明本体文件；按领域加载引擎与适配器
-    domain_mod = importlib.import_module(f"domains.{args.domain}")
+    # 领域包自声明本体文件；领域名与 root 由配置决定（CLI 可覆盖）
+    settings = load_config(cli_root=args.domains_root, cli_domain=args.domain)
+    domain_name = settings.effective_default()
+    if domain_name is None:
+        parser.error(
+            f"未确定领域：{settings.root} 下已安装 {settings.installed() or '（空）'}。"
+            "请安装领域包（ontologyctl domain install --from <path>）、"
+            "用 --domain 指定，或在 config/domain.json 设置 domains.default。"
+        )
+    domain_mod = load_domain_module(domain_name, settings=settings)
 
     # 运行态（引擎 / 适配器随热重载替换）：工具闭包只依赖这两个工厂
     state = {}
 
     def _load(onto_path, extensions_dir=None) -> tuple:
         engine = OntologyEngine(onto_path=onto_path, extensions_dir=extensions_dir)
-        return engine, load_domain(args.domain, engine)
+        return engine, load_domain(domain_name, engine, settings=settings)
 
     def get_engine() -> OntologyEngine:
         return state["engine"]
@@ -347,7 +360,7 @@ def main() -> int:
         print(f"[info] 文件监听热重载已启动（间隔 {args.watch_interval}s；核心本体 + extensions/）",
               file=sys.stderr, flush=True)
 
-    server = build_server(get_engine, get_adapter, args.domain, domain_mod.DESCRIPTION)
+    server = build_server(get_engine, get_adapter, domain_name, domain_mod.DESCRIPTION)
 
     if args.transport == "stdio":
         print(f"[info] 本体推理 MCP Server（{state['adapter'].NAME} 领域）已启动（stdio）；kill -HUP / 文件监听热重载",

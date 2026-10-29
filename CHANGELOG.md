@@ -3,6 +3,31 @@
 本项目所有重要变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)（SemVer）。
 
+## [Unreleased]
+
+本轮为「领域包插件化」批次：领域包从"随仓库入库的运行态"改为"可安装的插件"，加载位置与默认领域由配置决定，为后续热加载与多领域铺路。
+
+### Added
+
+- **运行态配置层 `config/`**：`domain.example.json` 随仓库分发（模板），本地 `domain.json` 入 `.gitignore`；优先级 CLI > 环境变量（`ONTOLOGY_DOMAINS_ROOT` / `ONTOLOGY_DOMAIN`）> 配置文件 > 模板回退 > 内置默认，字段级合并，逐字段记录来源便于排查
+- **`ontologyctl domain install --from <路径>`**：把任意路径的领域包装进运行态 root；先复制到 `.staging` 校验（契约符号、`ONTO_FILE` 必须解析在包内）再落盘，`--force` 覆盖前备份到 `backups/`，并写 `root/.installed/<name>.json`（来源 / 时间 / 内容哈希）
+- **领域适配器契约 `reasoner/protocol.py`**：把出口层长期鸭子调用的 7 个方法显式声明为 `AdapterProtocol`，`/api/health` 返回 `contract` 字段，缺少方法时对应端点返回 501 并附缺失清单（原为运行期 500）
+- **`domains` 加载器支持任意路径**：`spec_from_file_location` + `submodule_search_locations` 构造合法包，包内相对导入保持有效；同路径复用避免类身份分裂，`reload=True` 整包重建且失败回滚
+
+### Changed
+
+- **示例领域迁至 `examples/agent_task/`，`domains/` 成为运行态 root 并入 `.gitignore`**（部署需先执行 `domain install`）
+- **默认领域不再写死**：`api/main.py` 与 `mcp/mcp_server.py` 均按配置解析默认领域（`--domain` / `--domains-root` 可覆盖），REST API 换领域无需改源码；`reasoner.engine.ONTO_PATH` 改为 import 时按配置解析（包内 `config.json` 的 `onto_file` → 包内唯一 `*.owl` → 历史路径兜底）
+- **`mcp/policy.py`、`mcp/tool_guard.py`、`reasoner/pipeline_gate.py` 的领域目录改为按配置解析**，不再硬编码仓库下的 `domains/`
+- **SHACL 形状文件定位**：`examples/agent_task/mcp.py` 由"上溯三级"改为 环境变量 `ONTOLOGY_SHAPES_FILE` → 包内 `SHAPES_FILE` 声明 → 包内 `shapes/*.ttl` → 历史布局，领域包安装到任意 root 后仍可用
+- 后端测试 178 → 236 项；`tests/conftest.py` 以进程内别名兼容旧导入，未安装时自动以临时副本运行（干净检出可直接跑，且不写脏 `examples/`）
+
+### BREAKING CHANGE
+
+- 领域包不再随仓库放在 `domains/` 下直接生效；`git clone` 后需执行
+  `python scripts/ontologyctl.py domain install --from ./examples/agent_task`。
+- `domains/*/` 已进 `.gitignore`，`persist=true` 产生的 `extensions/*.ttl` 不再随 git 版本化。
+
 ## [0.5.0] - 2026-10-28
 
 本轮为「编辑器工程化」里程碑：可视化编辑器完成列表-详情式重设计，在线编辑器接入统一样式规范并对齐体验，二者共享同一套设计 token。

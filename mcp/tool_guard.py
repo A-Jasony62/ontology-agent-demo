@@ -31,8 +31,21 @@ import os
 import time
 from collections import deque
 
-_DOMAINS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "domains")
+# None = 按运行态配置解析 root；测试可显式赋值为具体目录
+_DOMAINS_DIR: str | None = None
+
+
+def _domains_dir() -> str:
+    """领域包根目录：优先显式覆盖，否则取运行态配置。"""
+    if _DOMAINS_DIR:
+        return _DOMAINS_DIR
+    try:
+        from config import load_config
+
+        return str(load_config().root)
+    except Exception:  # noqa: BLE001
+        return os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "domains")
 
 
 class ToolGuard:
@@ -205,7 +218,7 @@ def load_guard_config(domain_name: str) -> ToolGuard | None:
 
     JSON 损坏或数值非法 → fail-fast 抛 ValueError（指明文件），不静默降级。
     """
-    path = os.path.join(_DOMAINS_DIR, domain_name, "guard_config.json")
+    path = os.path.join(_domains_dir(), domain_name, "guard_config.json")
     if not os.path.isfile(path):
         return None
     with open(path, encoding="utf-8") as f:
