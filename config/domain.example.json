@@ -1,0 +1,20 @@
+{
+  "_readme": [
+    "本文件随仓库分发，是配置模板，不要在部署环境直接改它。",
+    "部署时复制为 config/domain.json 再做本地修改；domain.json 已被 .gitignore 忽略。",
+    "domain.json 只需写出与模板不同的字段，其余字段会从本模板继承。",
+    "优先级：CLI 参数 > 环境变量 > domain.json > domain.example.json > 内置默认。"
+  ],
+  "domains": {
+    "root": "domains",
+    "default": null,
+    "watch": {
+      "enabled": false,
+      "interval": 2.0
+    }
+  },
+  "servers": {
+    "api_port": 8000,
+    "mcp_port": 9000
+  }
+}

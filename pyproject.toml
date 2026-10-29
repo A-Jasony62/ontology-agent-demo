@@ -29,7 +29,7 @@ dependencies = [
 Documentation = "https://github.com/jasony62/ontology-agent-demo"
 
 [tool.setuptools.packages.find]
-include = ["api*", "reasoner*", "domains*", "mcp*", "scripts*"]
+include = ["api*", "reasoner*", "domains*", "mcp*", "scripts*", "config*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
