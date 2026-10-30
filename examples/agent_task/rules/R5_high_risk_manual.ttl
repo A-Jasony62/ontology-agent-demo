@@ -1,0 +1,29 @@
+# R5 · 高风险复合任务无人可整体执行 → 需人工介入
+#
+# 业务语义：任务风险等级 ≥ 4，且图中没有任何 Agent 的 can_execute 指向它——
+#   每个子任务也许都有人做，但没人能对整体负责，必须人工介入编排与担责。
+# 维护方式：懂业务的人直接改这个文件，保存即生效（run_rules 下次执行用新规则，
+#   不需要改代码发版）。
+# 注意：sh:construct 字符串内必须自带 PREFIX 声明（执行器不注入本文件头的 @prefix），
+#   这是 SPARQL 的标准写法。
+
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix demo: <http://demo.example.org/agent-task-ontology#> .
+
+demo:HighRiskManualReviewShape a sh:NodeShape ;
+  sh:targetClass demo:Task ;
+  sh:rule demo:R5_high_risk_manual .
+
+demo:R5_high_risk_manual a sh:SPARQLRule ;
+  rdfs:label "R5 高风险无人接手需人工介入" ;
+  rdfs:comment "risk_level >= 4 且无任何 Agent 可整体执行 → needs_manual_review 置真" ;
+  sh:construct """
+    PREFIX demo: <http://demo.example.org/agent-task-ontology#>
+    CONSTRUCT { ?this demo:needs_manual_review true }
+    WHERE {
+      ?this demo:has_risk_level ?lvl .
+      FILTER(?lvl >= 4)
+      FILTER NOT EXISTS { ?agent demo:can_execute ?this }
+    }
+  """ .

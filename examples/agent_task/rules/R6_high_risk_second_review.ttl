@@ -1,0 +1,27 @@
+# R6 · 高风险单片任务（SimpleTask）→ 强制双人复核
+#
+# 业务语义：单片任务风险等级 ≥ 4 时不能一个人说了算——即便已有执行人，
+#   也要第二个人复核过才能放行（needs_second_review）。
+# 与 R5 的分工：R5 管「复合任务没人能整体接」要人工介入（needs_manual_review）；
+#   R6 管「单片任务有人做但风险高」要加一道复核（needs_second_review）。
+#   两份规则命中的任务集合不相交，执行报告按文件归因（见 run_rules 返回的 files 字段）。
+
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix demo: <http://demo.example.org/agent-task-ontology#> .
+
+demo:HighRiskSimpleSecondReviewShape a sh:NodeShape ;
+  sh:targetClass demo:SimpleTask ;
+  sh:rule demo:R6_high_risk_second_review .
+
+demo:R6_high_risk_second_review a sh:SPARQLRule ;
+  rdfs:label "R6 高风险单片任务强制双人复核" ;
+  rdfs:comment "SimpleTask 且 risk_level >= 4 → needs_second_review 置真" ;
+  sh:construct """
+    PREFIX demo: <http://demo.example.org/agent-task-ontology#>
+    CONSTRUCT { ?this demo:needs_second_review true }
+    WHERE {
+      ?this demo:has_risk_level ?lvl .
+      FILTER(?lvl >= 4)
+    }
+  """ .
