@@ -154,7 +154,7 @@ npm run build               # 产物 frontend/app/dist
         │ ① /api/ontology 图谱数据       │ ① MCP 工具调用（能力匹配/编排/分配…）
         ▼                                ▼
 推理 API（api/main.py · FastAPI）◄─────── MCP Server（mcp/mcp_server.py · :9000）
-   /api/ontology /api/reason /api/classify /api/explain /api/consistency
+   /api/ontology /api/reason /api/entities /api/explain /api/consistency
         │ ② 触发推理（领域适配器）
         ▼
 通用引擎（reasoner/engine.py）
@@ -177,7 +177,7 @@ npm run build               # 产物 frontend/app/dist
 | GET  | `/api/health`      | 健康检查                                                         |
 | GET  | `/api/ontology`    | 本体结构（图谱渲染数据）                                                 |
 | POST | `/api/reason`      | `{type, task, agent, params}`；内置 `capability_match` / `orchestrate` / `assign`，领域可通过 `CAPABILITY_HANDLERS` 追加自有类型（如 `diagnose`，参数放 `params`） |
-| POST | `/api/classify`    | 新增任务个体并自动分类                                                  |
+| POST | `/api/entities`    | `{payload, persist?}`；字段形状由领域的 `ENTITY_SCHEMA` 声明，先看 `GET /api/entities/schema` |
 | POST | `/api/explain`     | 最近一次推理的推导链                                                   |
 | POST | `/api/consistency` | 一致性 / 合规冲突检查                                                 |
 
@@ -357,7 +357,7 @@ URL 填 `http://127.0.0.1:9000/mcp`，保存后即可在对话中直接调用。
 
 ## 开发与贡献
 
-- **测试**：`make test`（pytest，370 项，含推理规则、插件契约、热切换与 SDK 边界）；CI 在 push / PR 时对 Python 3.10–3.12 全量跑。
+- **测试**：`make test`（pytest，393 项，含推理规则、插件契约、热切换与 SDK 边界）；CI 在 push / PR 时对 Python 3.10–3.12 全量跑。
 - **文档**：指南用 MkDocs 构建，推送 `main` 后由 CI 自动构建并部署 GitHub Pages；本地 `make docs` 预览需 Python 3.10–3.12（当前机器 3.14 暂无 watchdog 轮子，故本地构建在 CI 上验证）。
 - **可安装包**：`pip install -e .`（pyproject.toml，依赖与 requirements.txt 一致）。领域插件 SDK 是
   同仓库的 workspace 包，`requirements.txt` 已含 `-e ./packages/ontology-plugin-sdk`，会一起装上。

@@ -47,10 +47,31 @@ ONTO_FILE = "fault_diag.owl"
 # 能力声明（三态契约见 ontology_plugin_sdk.protocol）：
 #   diagnose     ← 本领域自定义能力，框架 REQUIRED_METHODS 里没有这个名字
 #   consistency  ← 框架既有能力，本领域用"故障模式是否都有处置"来解读
-#   explain / graph_export ← 由 AdapterBase 提供默认实现
-# 未声明的 capability_match / orchestrate / assign / classify 是**明说不提供**，
+#   explain / graph_export / create ← 由 AdapterBase 提供默认实现
+# 未声明的 capability_match / orchestrate / assign 是**明说不提供**，
 # 端点应返 400「未声明能力」而不是 501 或 500。
-CAPABILITIES = ("diagnose", "consistency", "explain", "graph_export")
+CAPABILITIES = ("diagnose", "consistency", "explain", "graph_export", "create")
+
+# 实体 schema：补录一个故障模式（维护手册的日常操作）。
+#
+# 与 agent_task 的 schema 相比没有任何同名字段——这正是通用 create 的意义：
+# 框架只按声明校验、建个体、写断言，不认识 FaultMode / hasSeverity 这些词。
+# severity 落成字面量后由 OWL 推理定级：本体里 CriticalFault 定义为
+# 「hasSeverity 恰为 4 的 FaultMode」，所以建 severity=4 会**推出** CriticalFault，
+# 不需要领域代码参与——create 的返回值里 types 就能看到。
+ENTITY_SCHEMA = {
+    "class": "fault_class",
+    "id_field": "name",
+    "label_field": "label",
+    "fields": [
+        {"name": "name", "kind": "literal", "type": "str"},
+        {"name": "label", "kind": "literal", "type": "str"},
+        {"name": "severity", "property": "hasSeverity",
+         "kind": "literal", "type": "int", "required": True},
+        {"name": "remedies", "property": "hasRemedy",
+         "kind": "node", "many": True},
+    ],
+}
 
 
 def _handle_diagnose(adapter, req):
@@ -81,6 +102,7 @@ class FaultDiagnosisAdapter(AdapterBase):
     NAME = NAME
     CAPABILITIES = CAPABILITIES
     CAPABILITY_HANDLERS = CAPABILITY_HANDLERS
+    ENTITY_SCHEMA = ENTITY_SCHEMA
     # 本领域没有 R2/R4 那类编号规则，推理就靠 OWL RL + 因果链遍历
     REASONER_SUMMARY = "OWL 2 RL (owlrl) + 因果链遍历"
 

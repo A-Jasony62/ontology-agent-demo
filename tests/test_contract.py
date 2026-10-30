@@ -22,10 +22,13 @@ from reasoner.protocol import (  # noqa: E402
     AdapterBase,
     REQUIRED_METHODS,
     capability_handlers,
+    create_entity,
     dangling_capabilities,
     missing_methods,
+    normalize_entity_payload,
     supports,
     undeclared_missing,
+    validate_entity_schema,
 )
 
 _PROBE = "contract_probe"
@@ -262,6 +265,30 @@ class _FakeEngine:
             found |= set(self.g.subjects(RDF.type, cls_iri))
         return sorted(local(i) for i in found)
 
+    # ---- 写图原语（通用 create 需要；刻意只实现这些，不多给） ----
+
+    def add_type(self, individual, class_name):
+        self.g.add((_NS[individual], RDF.type, _NS[class_name]))
+
+    def add_triple(self, subject, property_name, value):
+        self.g.add((_NS[subject], _NS[property_name], _NS[value]))
+
+    def add_literal(self, subject, property_name, value):
+        self.g.add((_NS[subject], _NS[property_name], Literal(value)))
+
+    def reparse(self):
+        """刻意不推理：通用 create 只要求"重新推理"这个动作存在。
+
+        推理正确性由 fault_diag 的真实引擎用例守着（CriticalFault 由
+        owl:hasValue 推出），夹具这边不重复造一个不可信的推理器。
+        """
+
+    def types_of(self, individual):
+        return sorted(
+            local(t) for t in self.g.objects(_NS[individual], RDF.type)
+            if isinstance(t, URIRef)
+        )
+
 
 def _term(value):
     # BNode 必须在 str 判断之前返回：rdflib.BNode 继承自 str，
@@ -368,7 +395,7 @@ def test_adapter_can_override_defaults():
     assert A().graph_export()["custom"] is True
 
 
-def _adapter_with(engine, top=("Widget",)):
+def _adapter_with(engine, top=("Widget",), schema=None):
     """用给定引擎装配一个最小适配器（只测默认实现，不测业务）。"""
     from reasoner.semantic import SemanticConfig
 
@@ -384,7 +411,8 @@ def _adapter_with(engine, top=("Widget",)):
         def capability_match(self, *a, **k):
             return {}
 
-    return A()
+    cls = type("AWithSchema", (A,), {"ENTITY_SCHEMA": schema}) if schema else A
+    return cls()
 
 
 def test_default_graph_export_skips_anonymous_subclass():
@@ -435,3 +463,147 @@ def test_default_graph_export_nests_multi_level_hierarchy():
                for c in _adapter_with(engine).graph_export()["classes"]}
     assert parents == {"Widget": None, "Gadget": "Widget", "SubGadget": "Gadget"}
 
+
+
+# ---------------- 实体 schema 与通用 create ----------------
+#
+# 背景：`classify(name, capabilities, constraints, risk_level)` 把「智能体任务
+# 编排」的四个字段写进了框架契约，异构领域只能声明不提供。现在契约换成
+# `create(payload)` + 领域自声明的 `ENTITY_SCHEMA`，下面的用例守两件事：
+#   1. schema 写错在**加载期**就暴露，而不是首个请求进来时静默走偏；
+#   2. 校验规则只有一份（框架），领域覆盖 create 时必须复用它。
+
+_SCHEMA = {
+    "class": "Widget",
+    "id_field": "name",
+    "label_field": "label",
+    "fields": [
+        {"name": "name", "kind": "literal", "type": "str"},
+        {"name": "label", "kind": "literal", "type": "str"},
+        {"name": "weight", "property": "weight",
+         "kind": "literal", "type": "int", "required": True},
+        {"name": "parts", "property": "hasPart", "kind": "node", "many": True},
+    ],
+}
+
+
+def _engine_with_parts():
+    return _FakeEngine([
+        (f"{T}Widget", RDF.type, f"{T}Thing"),
+        (f"{T}Part1", RDF.type, f"{T}Part"),
+    ])
+
+
+def test_validate_entity_schema_fills_defaults():
+    """规范化补齐默认值：调用方不必再写 `f.get(...) or 默认`。"""
+    schema = validate_entity_schema({"class": "Widget", "fields": [{"name": "name"}]})
+    assert schema["id_field"] == "name"
+    assert schema["label_field"] is None
+    field = schema["fields"][0]
+    assert (field["kind"], field["type"], field["many"]) == ("literal", "str", False)
+    assert field["required"] is True          # id_field 结构性必填
+
+
+@pytest.mark.parametrize("bad, hint", [
+    ({"fields": [{"name": "name"}]}, "class"),
+    ({"class": "W", "fields": []}, "fields"),
+    ({"class": "W", "fields": [{"name": ""}]}, "name"),
+    ({"class": "W", "fields": [{"name": "a"}, {"name": "a"}]}, "重复"),
+    ({"class": "W", "fields": [{"name": "a", "kind": "nodex"}]}, "kind"),
+    ({"class": "W", "fields": [{"name": "a", "type": "date"}]}, "type"),
+    ({"class": "W", "id_field": "nope", "fields": [{"name": "a"}]}, "id_field"),
+])
+def test_validate_entity_schema_rejects_bad_shape(bad, hint):
+    with pytest.raises(ValueError, match=hint):
+        validate_entity_schema(bad)
+
+
+def test_create_writes_triples_and_reports_types():
+    """通用 create：建个体 + 写断言 + 报类型，字段形状全来自 schema。"""
+    engine = _engine_with_parts()
+    adapter = _adapter_with(engine, schema=_SCHEMA)
+
+    result = create_entity(adapter, {
+        "name": "w1", "label": "一号件", "weight": "7", "parts": ["Part1"],
+    })
+
+    assert result["individual"] == "w1"
+    assert result["label"] == "一号件"
+    assert result["class"] == "Widget"
+    assert result["types"] == ["Widget"]
+    assert {a["property"] for a in result["asserted"]} == {"weight", "hasPart"}
+    assert (_NS["w1"], RDF.type, _NS["Widget"]) in engine.g
+    assert (_NS["w1"], RDFS.label, Literal("一号件")) in engine.g
+    assert (_NS["w1"], _NS["hasPart"], _NS["Part1"]) in engine.g
+
+
+def test_create_rejects_unknown_missing_and_mistyped():
+    """三种真实会犯的错：拼错字段名、漏必填、类型不符。"""
+    adapter = _adapter_with(_engine_with_parts(), schema=_SCHEMA)
+
+    with pytest.raises(ValueError, match="未知字段"):
+        create_entity(adapter, {"name": "w1", "weigth": 3})
+    with pytest.raises(ValueError, match="缺少必填字段"):
+        create_entity(adapter, {"name": "w1"})
+    with pytest.raises(ValueError, match="需要 int"):
+        create_entity(adapter, {"name": "w1", "weight": "很重"})
+    # 单值字段不接受列表
+    with pytest.raises(ValueError, match="单值"):
+        create_entity(adapter, {"name": "w1", "weight": [1, 2]})
+
+
+def test_create_rejects_dangling_object_reference():
+    """指向不存在的个体的边不写——落成一条查不到的边比报错更难查。"""
+    adapter = _adapter_with(_engine_with_parts(), schema=_SCHEMA)
+    with pytest.raises(ValueError, match="不存在"):
+        create_entity(adapter, {"name": "w1", "weight": 1, "parts": ["Ghost"]})
+
+
+def test_create_suffixes_duplicate_individual():
+    adapter = _adapter_with(_engine_with_parts(), schema=_SCHEMA)
+    assert create_entity(adapter, {"name": "dup", "weight": 1})["individual"] == "dup"
+    assert create_entity(adapter, {"name": "dup", "weight": 1})["individual"] == "dup_2"
+
+
+def test_create_without_schema_is_explicit_error():
+    """没有 ENTITY_SCHEMA 的领域调 create 要拿到明确错误，而不是假成功。"""
+    adapter = _adapter_with(_engine_with_parts())
+    with pytest.raises(ValueError, match="ENTITY_SCHEMA"):
+        create_entity(adapter, {"name": "w1"})
+
+
+def test_normalize_payload_requires_declared_schema():
+    """校验入口对领域同样可用：覆盖 create 的领域应当复用它，规则只有一份。"""
+    adapter = _adapter_with(_engine_with_parts(), schema=_SCHEMA)
+    assert normalize_entity_payload(adapter, {"name": "x", "weight": 2}) == {
+        "name": "x", "weight": 2,
+    }
+
+
+def test_bad_entity_schema_rejected_at_load(tmp_path, root):
+    """schema 写错属于声明错误：加载期拒，而不是首个请求进来才走偏。"""
+    _pkg(root, "NAME = 'probe'\n"
+               "class A:\n"
+               "    CAPABILITIES = ()\n"
+               "    ENTITY_SCHEMA = {'class': 'W', 'fields': [{'name': 'a', 'kind': 'nodex'}]}\n"
+               "    def create(self, payload, persist=False):\n"
+               "        return {}\n"
+               "def create_adapter(engine, config=None):\n"
+               "    return A()\n")
+
+    with pytest.raises(DomainContractError, match="ENTITY_SCHEMA"):
+        load_domain(_PROBE, object(), settings=_settings(tmp_path, root))
+
+
+def test_entity_schema_without_create_rejected(tmp_path, root):
+    """schema 没有入口用：声明完整但没有 create，等于承诺了做不到。"""
+    _pkg(root, "NAME = 'probe'\n"
+               "class A:\n"
+               "    CAPABILITIES = ()\n"
+               "    ENTITY_SCHEMA = {'class': 'W', 'id_field': 'a', "
+               "'fields': [{'name': 'a'}]}\n"
+               "def create_adapter(engine, config=None):\n"
+               "    return A()\n")
+
+    with pytest.raises(DomainContractError, match="create"):
+        load_domain(_PROBE, object(), settings=_settings(tmp_path, root))

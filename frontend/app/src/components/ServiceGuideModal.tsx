@@ -30,7 +30,7 @@ function CopyBlock({ code }: { code: string }) {
 const API_TABLE: { method: string; path: string; desc: string; note?: string }[] = [
   { method: 'GET', path: '/api/health', desc: '服务状态、默认本体、Agent/任务数量', note: '任意状态' },
   { method: 'POST', path: '/api/reason', desc: '能力匹配 / 任务编排 / 分配（type 参数）', note: '默认本体' },
-  { method: 'POST', path: '/api/classify', desc: '新增任务个体 + 自动分类', note: '默认本体' },
+  { method: 'POST', path: '/api/entities', desc: '按领域 schema 新建实体（先看 /api/entities/schema）', note: '默认本体' },
   { method: 'POST', path: '/api/explain', desc: '最近一次查询的推导链（中文解释）', note: '默认本体' },
   { method: 'POST', path: '/api/consistency', desc: '全量分配的一致性 / 合规冲突检查', note: '默认本体' },
   { method: 'POST', path: '/api/query', desc: 'SPARQL SELECT 通用查询', note: '任意本体' },
@@ -163,7 +163,7 @@ cd /Users/yangyue/projects/ontology-agent-demo
 
           <h3>三、能力边界</h3>
           <ul className="guide-notes">
-            <li><b>默认本体</b>：领域推理（capability_match / orchestrate / assign / classify / consistency / explain）可用；</li>
+            <li><b>默认本体</b>：领域推理（capability_match / orchestrate / assign / consistency / explain）与实体创建（entities，字段形状见 <code>/api/entities/schema</code>）可用；</li>
             <li><b>通用模式</b>：导入自定义本体后，图谱 / 物化 / SPARQL / 个体 / 类型 / 属性等通用能力仍可用，领域推理返回明确提示；</li>
             <li><b>物化</b>：推理引擎按 OWL 2 RL（owlrl）+ R2/R4 业务规则扩展三元组，原始断言 ∪ 推理新增 = 物化后本体。</li>
             <li><b>编辑通道</b>：「在线编辑」（结构化表单，适合新手/快速调整）与「源码编辑」（RDF/XML 文本，适合精确控制公理）操作同一本体文件，保存以后保存者为准。</li>

@@ -5,7 +5,8 @@
     python query.py capability_match --task t_login_dev
     python query.py orchestrate      --task t_feature
     python query.py assign           --task t_compliance_dev --agent junior_dev
-    python query.py classify         --name t_chat_task --capabilities Coding --constraints ComplianceRequirement --risk 5
+    python query.py create           --name t_chat_task --capabilities Coding --constraints ComplianceRequirement --risk 5
+                                     # classify 是它的旧名（等价）；字段名取决于领域 ENTITY_SCHEMA
     python query.py consistency
     python query.py explain
     python query.py ontology
@@ -60,12 +61,16 @@ def http_query(kind: str, args) -> dict:
     if kind in ("capability_match", "orchestrate", "assign"):
         payload = {"type": kind, "task": args.task, "agent": args.agent}
         return _http_call("POST", "/api/reason", payload)
-    if kind == "classify":
-        return _http_call("POST", "/api/classify", {
-            "name": args.name,
-            "capabilities": args.capabilities,
-            "constraints": args.constraints,
-            "risk_level": args.risk,
+    if kind in ("create", "classify"):
+        # 通用实体创建：payload 的形状由领域 ENTITY_SCHEMA 声明，
+        # CLI 这几个开关只是 agent_task 这一种领域的便利包装。
+        return _http_call("POST", "/api/entities", {
+            "payload": {
+                "name": args.name,
+                "capabilities": args.capabilities,
+                "constraints": args.constraints,
+                "risk_level": args.risk,
+            },
         })
     # 通用接口（L1）
     if kind == "query-sparql":
@@ -117,8 +122,13 @@ def local_query(kind: str, args) -> dict:
         return ad.orchestrate(ad.NS[args.task])
     if kind == "assign":
         return ad.assign(ad.NS[args.task], ad.NS[args.agent])
-    if kind == "classify":
-        return ad.classify(args.name, args.capabilities, args.constraints, args.risk)
+    if kind in ("create", "classify"):
+        return ad.create({
+            "name": args.name,
+            "capabilities": args.capabilities,
+            "constraints": args.constraints,
+            "risk_level": args.risk,
+        })
     if kind == "consistency":
         return ad.consistency()
     if kind == "explain":
@@ -164,7 +174,8 @@ def main() -> int:
     p.add_argument("--local", action="store_true")
     p.add_argument("--pretty", "-p", action="store_true")
 
-    p = sub.add_parser("classify", help="新增任务个体并自动分类")
+    p = sub.add_parser("create", aliases=["classify"],
+                       help="按领域 schema 新建实体（classify 为旧名，等价）")
     p.add_argument("--name", "-n", default="t_chat_task", help="新任务名（自动去重）")
     p.add_argument("--capabilities", nargs="+", default=["Coding"], help="所需能力类名，如 Coding")
     p.add_argument("--constraints", nargs="+", default=[], help="约束类名，如 ComplianceRequirement")

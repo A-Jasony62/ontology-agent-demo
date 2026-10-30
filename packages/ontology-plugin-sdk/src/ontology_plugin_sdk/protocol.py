@@ -21,8 +21,29 @@ P1-1 起契约**强制**：宿主加载器（本仓库里是 `domains.registry.l
 `dangling_capabilities` 保证它至少有一个落点——见 `CAPABILITY_HANDLERS_ATTR`。
 
 框架提供 vs 领域实现：
-    - `explain` / `graph_export` 只依赖引擎原语，由 `AdapterBase` 提供默认实现；
-    - 其余 5 个是业务语义，必须由领域实现（或显式排除）。
+    - `explain` / `graph_export` / `create` 只依赖引擎原语与**领域自声明的配置**，
+      由 `AdapterBase` 提供默认实现；
+    - 其余 4 个是业务语义，必须由领域实现（或显式排除）。
+
+`create` 取代了原先的 `classify`。这不是改名，是**换掉了签名里的领域形状**：
+`classify(name, capabilities, constraints, risk_level)` 把「智能体任务编排」这个
+领域的四个字段写进了框架契约，异构领域只能落个"声明不提供"。现在契约只要求
+"能按自己的 schema 建实体"，字段形状由领域的 `ENTITY_SCHEMA` 声明：
+
+    ENTITY_SCHEMA = {
+        "class": "fault_class",            # 配置键或本体短名（走 config.resolve）
+        "id_field": "name",                # 个体 IRI 取自哪个字段（必填）
+        "label_field": "label",            # 可选：写 rdfs:label
+        "fields": [
+            {"name": "severity", "property": "hasSeverity",
+             "kind": "literal", "type": "int", "required": True},
+            {"name": "remedies", "property": "hasRemedy",
+             "kind": "node", "many": True},
+        ],
+    }
+
+框架据此校验 payload（未知字段 / 缺失必填 / 类型不符 → ValueError）、建个体、
+写断言、触发推理；需要富返回的领域覆盖 `create` 即可，框架仍然负责校验。
 
 用法：
     from ontology_plugin_sdk import missing_methods, supports
@@ -35,7 +56,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from rdflib import OWL, RDF, RDFS, URIRef
+from rdflib import OWL, RDF, RDFS, Literal, URIRef
 
 # 与引擎同一个实现。原先这里复制了一份（目的是不 import reasoner.engine，
 # 避免协议层反向依赖引擎）；搬进 SDK 后 engine 已是同包内的纯函数模块，
@@ -50,29 +71,42 @@ __all__ = [
     "REQUIRED_METHODS",
     "CAPABILITIES",
     "CAPABILITY_HANDLERS_ATTR",
+    "ENTITY_SCHEMA_ATTR",
     "capability_handlers",
+    "create_entity",
     "dangling_capabilities",
     "default_explain",
     "default_graph_export",
+    "entity_schema",
     "missing_methods",
+    "normalize_entity_payload",
+    "validate_entity_schema",
     "supports",
     "undeclared_missing",
 ]
 
 
 # 业务语义方法：必须由领域实现，框架无法代劳
+#
+# `classify` 已从这里移除——它的签名 `(name, capabilities, constraints,
+# risk_level)` 是「智能体任务编排」的形状，留在契约里等于要求每个领域都长成
+# agent_task。它现在是 agent_task 自己的方法（仍在它的 CAPABILITIES 里，
+# 也仍是它 MCP 工具的入口），框架不再认识这个词。
 BUSINESS_METHODS: tuple[str, ...] = (
     "capability_match",
     "orchestrate",
     "assign",
-    "classify",
     "consistency",
 )
 
-# 框架能力：只依赖引擎原语，P1 起由基类提供默认实现
+# 框架能力：只依赖引擎原语 + 领域自声明的配置，由基类提供默认实现
+#
+# `create` 是 `classify` 的通用替代：字段形状来自领域的 `ENTITY_SCHEMA`，
+# 框架只负责"按声明校验、按声明写图"，不认识任何具体领域词汇。
 FRAMEWORK_METHODS: tuple[str, ...] = (
     "explain",
     "graph_export",
+    "create",
 )
 
 # 当前框架要求的全部方法（P0 阶段与 CAPABILITIES 同集）
@@ -91,15 +125,29 @@ CAPABILITIES: tuple[str, ...] = REQUIRED_METHODS
 # 处理器签名与框架内置表一致：(adapter, request) -> dict，因此可以共用同一张路由表。
 CAPABILITY_HANDLERS_ATTR = "CAPABILITY_HANDLERS"
 
+# 领域自声明实体形状的出口：适配器上可选的属性名，值为 schema 字典。
+#
+# 为什么需要它：`classify` 那种"参数即领域词汇"的方法，异构领域只能声明
+# 不提供——于是"新建一个实体"这件任何领域都要做的事，框架反而只剩
+# agent_task 一条路。schema 把形状交回领域，框架只保留"校验 + 通用写图"，
+# 第三个领域不需要框架认识它的任何字段名。
+#
+# 与 CAPABILITY_HANDLERS 的分工：
+#     ENTITY_SCHEMA       说什么样的 payload 合法（数据形状）
+#     CAPABILITY_HANDLERS 说从哪个操作进来（业务操作）
+ENTITY_SCHEMA_ATTR = "ENTITY_SCHEMA"
+
 
 @runtime_checkable
 class AdapterProtocol(Protocol):
     """领域适配器契约。
 
     只描述"方法存在"这一层；参数语义由各方法自己的 docstring 负责。
-    注意 `classify` 的 `capabilities` / `constraints` / `risk_level` 是
-    「智能体任务编排」领域的形状，异构领域无法照此实现——这里如实声明，
-    不假装通用；自由 payload 方案留待后续单独评估。
+
+    `create` 刻意只收**自由 payload**：形状由领域的 `ENTITY_SCHEMA` 声明，
+    契约本身不认识任何字段名。上一版这里写的是 `classify(name, capabilities,
+    constraints, risk_level)`——那是 agent_task 的形状，异构领域只能落个
+    "声明不提供"，等于框架替一个领域向所有领域立规矩。
     """
 
     def capability_match(self, task_iri: Any, with_derivation: bool = True) -> dict:
@@ -121,11 +169,11 @@ class AdapterProtocol(Protocol):
         """全量一致性 / 合规冲突检查。"""
         ...
 
-    def classify(
-        self, name: str, capabilities: list, constraints: list,
-        risk_level: int = 3, persist: bool = False,
-    ) -> dict:
-        """新增个体、重推理、自动分类。"""
+    def create(self, payload: dict, persist: bool = False) -> dict:
+        """按领域自声明的 `ENTITY_SCHEMA` 新建实体：校验 → 写图 → 推理。
+
+        payload 的字段名由领域决定，框架只验它是否合自己声明的形状。
+        """
         ...
 
     def explain(self) -> dict:
@@ -217,6 +265,269 @@ def supports(adapter: Any, capability: str) -> bool:
     if callable(getattr(adapter, capability, None)):
         return True
     return capability in capability_handlers(adapter)
+
+
+# ------------------------------------------------------- 实体 schema 与通用创建
+
+_FIELD_KINDS = frozenset({"literal", "node"})
+_LITERAL_TYPES = frozenset({"str", "int", "float", "bool"})
+
+
+def entity_schema(adapter: Any) -> dict | None:
+    """适配器声明的实体 schema（原样返回）。None 表示不提供通用创建。"""
+    return getattr(adapter, ENTITY_SCHEMA_ATTR, None)
+
+
+def validate_entity_schema(schema: Any) -> dict:
+    """校验并规范化 `ENTITY_SCHEMA`，不合法抛 ValueError。
+
+    规范化 = 所有字段补齐默认值。默认值散落在调用方（`f.get("kind") or ...`）
+    时总有一处会写错，而这类错误的表现是"某个字段静默落成了字面量"。
+
+    校验项都是写 schema 时真会犯的错：字段没名字、名字重复、kind 拼错、
+    literal 却声明了不存在的 type、id_field 指向一个不存在的字段。
+    """
+    if not isinstance(schema, dict):
+        raise ValueError(
+            f"{ENTITY_SCHEMA_ATTR} 应为字典，实际 {type(schema).__name__}"
+        )
+
+    cls = schema.get("class")
+    if not isinstance(cls, str) or not cls.strip():
+        raise ValueError(f"{ENTITY_SCHEMA_ATTR} 缺少 class（语义配置键或本体短名）")
+
+    raw_fields = schema.get("fields")
+    if not isinstance(raw_fields, list) or not raw_fields:
+        raise ValueError(f"{ENTITY_SCHEMA_ATTR} 的 fields 应为非空列表")
+
+    fields: list[dict] = []
+    seen: set[str] = set()
+    for item in raw_fields:
+        if not isinstance(item, dict):
+            raise ValueError(f"fields 的每一项应为字典，实际 {type(item).__name__}")
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"fields 里有字段缺少 name：{item!r}")
+        if name in seen:
+            raise ValueError(f"字段名重复：{name}")
+        seen.add(name)
+
+        kind = item.get("kind", "literal")
+        if kind not in _FIELD_KINDS:
+            raise ValueError(f"字段 {name} 的 kind 应为 {sorted(_FIELD_KINDS)}，实际 {kind!r}")
+        ftype = item.get("type", "str")
+        if kind == "literal" and ftype not in _LITERAL_TYPES:
+            raise ValueError(
+                f"字段 {name} 的 type 应为 {sorted(_LITERAL_TYPES)}，实际 {ftype!r}"
+            )
+        prop = item.get("property") or name
+        if not isinstance(prop, str) or not prop.strip():
+            raise ValueError(f"字段 {name} 的 property 应为非空字符串")
+        fields.append({
+            "name": name,
+            # property 既可以是语义配置键，也可以是本体短名——resolve() 缺省
+            # 返回键名本身，所以"属性短名 == 语义名"的常见情形不必写配置。
+            "property": prop,
+            "kind": kind,
+            "type": ftype,
+            "many": bool(item.get("many", False)),
+            "required": bool(item.get("required", False)),
+        })
+
+    id_field = schema.get("id_field") or "name"
+    if id_field not in seen:
+        raise ValueError(f"id_field {id_field!r} 不在 fields 里；个体 IRI 只能取自声明过的字段")
+    for f in fields:
+        if f["name"] == id_field:
+            # IRI 来源没有默认值可给，必填是结构性要求，不是偏好
+            f["required"] = True
+
+    label_field = schema.get("label_field")
+    if label_field is not None:
+        if label_field not in seen:
+            raise ValueError(f"label_field {label_field!r} 不在 fields 里")
+        lf = next(f for f in fields if f["name"] == label_field)
+        if lf["kind"] != "literal" or lf["many"]:
+            raise ValueError(f"label_field {label_field!r} 必须是单个 literal 字段")
+
+    return {
+        "class": cls,
+        "id_field": id_field,
+        "label_field": label_field,
+        "fields": fields,
+    }
+
+
+def _require_schema(adapter: Any) -> dict:
+    raw = entity_schema(adapter)
+    if raw is None:
+        raise ValueError(
+            f"领域未声明 {ENTITY_SCHEMA_ATTR}，无法按 schema 创建实体"
+        )
+    return validate_entity_schema(raw)
+
+
+def _coerce_literal(value: Any, field: dict) -> Any:
+    t = field["type"]
+    name = field["name"]
+    try:
+        if t == "int":
+            if isinstance(value, bool):
+                raise TypeError
+            if isinstance(value, str) and not value.strip().lstrip("-").isdigit():
+                raise TypeError
+            return int(value)
+        if t == "float":
+            if isinstance(value, bool):
+                raise TypeError
+            return float(value)
+        if t == "bool":
+            if isinstance(value, bool):
+                return value
+            text = str(value).strip().lower()
+            if text in ("true", "1", "yes"):
+                return True
+            if text in ("false", "0", "no"):
+                return False
+            raise TypeError
+        return value if isinstance(value, str) else str(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"字段 {name} 需要 {t}，收到 {value!r}") from None
+
+
+def _coerce_field(value: Any, field: dict) -> Any:
+    name = field["name"]
+    if field["kind"] == "node":
+        vals = value if isinstance(value, list) else [value]
+        if not field["many"] and isinstance(value, list):
+            raise ValueError(f"字段 {name} 是单值，不接受列表")
+        out = []
+        for v in vals:
+            if not isinstance(v, str) or not v.strip():
+                raise ValueError(f"字段 {name} 的取值应为本体短名字符串，收到 {v!r}")
+            out.append(v.strip())
+        return out if field["many"] else out[0]
+
+    if not field["many"] and isinstance(value, list):
+        raise ValueError(f"字段 {name} 是单值，不接受列表")
+    vals = value if isinstance(value, list) else [value]
+    out = [_coerce_literal(v, field) for v in vals]
+    return out if field["many"] else out[0]
+
+
+def normalize_entity_payload(adapter: Any, payload: Any) -> dict:
+    """按领域 schema 校验 payload，返回归一（含类型转换）后的字段字典。
+
+    未知字段**一律拒绝**而不是忽略：静默丢弃会让调用方以为生效了，
+    而 `riskLevel` / `risk_level` 这类拼写差异恰恰最难在返回值里看出来。
+    """
+    schema = _require_schema(adapter)
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"payload 应为字典，实际 {type(payload).__name__}")
+
+    known = {f["name"]: f for f in schema["fields"]}
+    unknown = sorted(k for k in payload if k not in known)
+    if unknown:
+        raise ValueError(
+            f"未知字段：{', '.join(unknown)}；本领域接受：{'、'.join(sorted(known)) or '（无）'}"
+        )
+
+    out: dict = {}
+    for name, f in known.items():
+        value = payload.get(name)
+        if value is None:
+            if f["required"]:
+                raise ValueError(f"缺少必填字段：{name}")
+            continue
+        out[name] = _coerce_field(value, f)
+    return out
+
+
+def create_entity(adapter: Any, payload: dict, persist: bool = False) -> dict:
+    """通用实体创建：schema 校验 → 建个体 → 写断言 → 推理（可选落盘）。
+
+    只做框架能确定的三件事：按声明校验、按声明写图、把推理结果报回去。
+    领域若需要富返回（分类解释、匹配结果），覆盖 `create` 并在里面先调
+    `normalize_entity_payload`——校验留在框架，语义留给领域。
+    """
+    schema = _require_schema(adapter)
+    values = normalize_entity_payload(adapter, payload)
+
+    engine = adapter.engine
+    cfg = adapter.c
+    NS = engine.NS
+
+    base = str(values[schema["id_field"]]).strip()
+    name = base
+    if (NS[name], None, None) in engine.g:      # 重名加后缀，与领域侧既有惯例一致
+        i = 2
+        while (NS[f"{name}_{i}"], None, None) in engine.g:
+            i += 1
+        name = f"{name}_{i}"
+
+    cls = cfg.resolve(schema["class"])
+    engine.add_type(name, cls)
+    triples: list[tuple] = [(name, RDF.type, NS[cls])]
+
+    # label_field 是可选字段：声明了但它不在本次 payload 里时不该建不出个体，
+    # 只是这个个体没有 rdfs:label（前端会回落到短名）
+    label_value = values.get(schema["label_field"]) if schema["label_field"] else None
+    if label_value is not None:
+        lbl = Literal(label_value)
+        engine.g.add((NS[name], RDFS.label, lbl))
+        triples.append((name, RDFS.label, lbl))
+
+    asserted: list[dict] = []
+    for f in schema["fields"]:
+        if f["name"] in (schema["id_field"], schema["label_field"]):
+            continue                      # 已用于 IRI / 标签
+        if f["name"] not in values:
+            continue
+        vals = values[f["name"]]
+        vals = vals if isinstance(vals, list) else [vals]
+        prop = cfg.resolve(f["property"])
+        for v in vals:
+            if f["kind"] == "node":
+                # 引用完整性：指向不存在的个体应当在写入时就报，而不是
+                # 落成一条谁也查不到的边（与 reference_predicates 同一条原则）
+                if (NS[v], None, None) not in engine.g:
+                    raise ValueError(f"字段 {f['name']} 引用的个体不存在：{v}")
+                engine.add_triple(name, prop, v)
+                triples.append((name, NS[prop], v))
+            else:
+                engine.add_literal(name, prop, v)
+                triples.append((name, NS[prop], Literal(v)))
+            asserted.append({"property": prop, "value": v, "kind": f["kind"]})
+
+    engine.reparse()
+
+    abox = getattr(adapter, "abox", None)
+    persisted = None
+    if persist:
+        if abox is None:
+            raise ValueError("领域未装配 ABox 事务，无法 persist=true")
+        persisted = abox.write_increment("create", name, triples)
+    if abox is not None:
+        abox.note_change("create", {"individual": name, "fields": values}, persisted)
+
+    return {
+        "individual": name,
+        "label": engine.label(name),
+        "class": cls,
+        "asserted": asserted,
+        # 推理后的类型：领域若定义了等价类 / hasValue 约束，这里能直接看到。
+        # 只收具名类——owl:equivalentClass 在 RL 推理后会物化出一个匿名
+        # owl:Restriction 并给个体加一条 rdf:type，它没有可读名字
+        # （_local 只能给出 N<hex>）。判据用 isinstance(t, URIRef) 而不是
+        # 检查名字前缀：BNode 继承自 str，任何"按 str 兜底"的写法都会漏。
+        "types": sorted({
+            _local(t) for t in engine.g.objects(NS[name], RDF.type)
+            if isinstance(t, URIRef)
+        }),
+        "persisted": persisted,
+    }
 
 
 # ---------------------------------------------------------------- 框架默认实现
@@ -405,3 +716,13 @@ class AdapterBase:
     def graph_export(self) -> dict:
         """图谱渲染数据（默认实现，子类可覆盖）。"""
         return default_graph_export(self)
+
+    def create(self, payload: dict, persist: bool = False) -> dict:
+        """按 `ENTITY_SCHEMA` 新建实体（默认实现）。
+
+        不声明 `ENTITY_SCHEMA` 的领域调到这里会得到一条明确的 ValueError
+        （→ 400），而不是一个"创建成功了但什么都没写"的假象。
+        需要富返回的领域覆盖本方法，但请先调 `normalize_entity_payload`：
+        校验规则只有一份，分散出去就会两边不一致。
+        """
+        return create_entity(self, payload, persist=persist)

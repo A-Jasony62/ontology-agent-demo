@@ -116,14 +116,14 @@ def test_status_endpoint_fields():
 
 
 def test_dirty_increment_on_classify():
-    """REQ-03：classify 未 commit 时 dirty=true、变更数增加。"""
+    """REQ-03：创建实体未 commit 时 dirty=true、变更数增加。"""
     from api.main import app
     client = TestClient(app)
     before = client.get("/api/ontology/status").json()["pending_changes"]
-    r = client.post("/api/classify", json={
+    r = client.post("/api/entities", json={"payload": {
         "name": "t_dirty_probe", "capabilities": ["Coding"], "constraints": [],
-        "risk_level": 3, "persist": False,
-    })
+        "risk_level": 3,
+    }, "persist": False})
     assert r.status_code == 200, r.text
     after = client.get("/api/ontology/status").json()["pending_changes"]
     assert after == before + 1

@@ -24,13 +24,16 @@ class ReasonRequest(BaseModel):
     params: dict[str, Any] | None = None
 
 
-class ClassifyRequest(BaseModel):
-    """新增任务个体并自动分类。"""
+class EntityRequest(BaseModel):
+    """通用实体创建：payload 的形状由领域的 `ENTITY_SCHEMA` 声明。
 
-    name: str = ""
-    capabilities: list[str] = []
-    constraints: list[str] = []
-    risk_level: int = 3
+    这里刻意只有一个自由字典：上一版的 `ClassifyRequest` 把
+    `capabilities / constraints / risk_level` 三个字段写进了框架，
+    等于要求每个领域都长成「智能体任务编排」。字段形状属于领域，
+    框架只负责按领域声明去校验——见 `GET /api/entities/schema`。
+    """
+
+    payload: dict[str, Any] = {}
     persist: bool = False      # 增量落盘（REQ-05，001 批次能力经 API 暴露）
 
 
@@ -45,7 +48,7 @@ class RevokeRequest(BaseModel):
 
 
 class ImportItem(BaseModel):
-    """批量导入的单个任务个体（与 ClassifyRequest 同构）。"""
+    """批量导入的单个任务个体（agent_task 的领域形状，非框架契约）。"""
 
     name: str
     capabilities: list[str] = []

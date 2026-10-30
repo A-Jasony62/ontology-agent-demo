@@ -293,7 +293,12 @@ def load_domain(name: str, engine, config=None, *, settings: DomainConfig | None
 
 
 def _validate_adapter(name: str, adapter) -> None:
-    from ontology_plugin_sdk import dangling_capabilities, undeclared_missing
+    from ontology_plugin_sdk import (
+        dangling_capabilities,
+        entity_schema,
+        undeclared_missing,
+        validate_entity_schema,
+    )
 
     missing = undeclared_missing(adapter)
     if missing:
@@ -320,6 +325,24 @@ def _validate_adapter(name: str, adapter) -> None:
             f"CAPABILITY_HANDLERS 里注册的处理器、或适配器上的同名可调用属性"
             f"（只经 MCP 暴露的能力属于最后一种）。"
         )
+
+    # 实体 schema（P4 遗留清单第 3 条）：create 的字段形状由领域声明，
+    # 框架据此校验 payload。schema 写错属于声明错误，应当在加载期暴露——
+    # 否则表现是"某个字段静默落成了字面量"或"建出来的个体少了一条边"，
+    # 那类问题查起来比一条加载失败贵得多。
+    raw_schema = entity_schema(adapter)
+    if raw_schema is not None:
+        try:
+            validate_entity_schema(raw_schema)
+        except ValueError as exc:
+            raise DomainContractError(
+                f"领域包 {name!r} 的 ENTITY_SCHEMA 不合法：{exc}"
+            ) from exc
+        if not callable(getattr(adapter, "create", None)):
+            raise DomainContractError(
+                f"领域包 {name!r} 声明了 ENTITY_SCHEMA 却没有 create 方法——"
+                f"schema 得有个入口用，继承 AdapterBase 即可白拿默认实现。"
+            )
 
 
 def list_domains(*, settings: DomainConfig | None = None) -> list[dict]:

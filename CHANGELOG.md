@@ -27,6 +27,8 @@
 - **领域自有能力的 HTTP 出口 `CAPABILITY_HANDLERS`**：适配器可声明 `{"能力名": 处理器}`，处理器签名 `(adapter, request) -> dict`，运行时并入 `/api/reason` 的路由表——框架没预见的业务操作（如 `diagnose`）终于能从 REST 触达，而不必为每个新领域改框架代码。领域处理器不得覆盖框架内置键（同名以内置为准：内置键的语义属于契约，被悄悄换掉会让按契约调用的集成方拿到形状不符的返回）；处理器抛 `ValueError` 转 400，领域包不必为状态码 import FastAPI。`/api/health` 的 `contract` 增加 `reason_kinds`（当前可触达类型）与 `dangling`（声明了却没有落点）
 - **"声明即承诺"覆盖自定义能力**：`dangling_capabilities()` + 加载期校验——`CAPABILITIES` 里每个名字必须有落点（契约方法 / `CAPABILITY_HANDLERS` 处理器 / 适配器同名方法）；只经 MCP 暴露的能力属于最后一种，照常放行。此前笔误型声明（`diagnoze`）会被静默接受：能力表里多一个谁都不认识的名字，端点既不报错也不开门
 - **`ReasonRequest.params`**：领域自定义参数的自由字典；`type` 由 `Literal` 枚举改为字符串——枚举会在进程启动那一刻把类型列表冻结成某个领域的形状，而领域是运行时可换的
+- **实体形状由领域自声明（`ENTITY_SCHEMA`）+ 通用创建端点**：领域声明字段清单（`class` / `id_field` / `label_field` / 每项的 `kind`（`literal`/`node`）、`type`（str/int/float/bool）、`many`、`required`），框架据此校验 payload、建个体、写断言、触发推理。`GET /api/entities/schema` 暴露形状，`POST /api/entities` 创建；`/api/health` 的 `contract` 附一句摘要。校验分两层：**加载期**拒掉写错的 schema（字段无名 / 重名 / kind 拼错 / `id_field` 指向不存在的字段），**请求期**拒掉未知字段（拼错字段名能被当成"生效了"是最难查的一类问题）、缺必填、类型不符、悬空引用（指向不存在的个体），一律 400
+- **`fault_diag` 借通用创建验证推理闭环**：补录 `severity=4` 的故障模式时，`CriticalFault` 由本体里的 `owl:hasValue` 定义推出——框架只按 schema 写三元组，定级全程没有领域代码参与
 
 ### Changed
 
@@ -36,7 +38,7 @@
 - **SHACL 形状文件定位**：`examples/agent_task/mcp.py` 改为 环境变量 `ONTOLOGY_SHAPES_FILE` → 包内 `SHAPES_FILE` 声明 → 包内 `shapes/*.ttl`（P3 起删除"上溯三级到仓库根"的兜底）
 - **`default_graph_export` 三处修复（由 `fault_diag` 照出）**：① 匿名类（`owl:Restriction` 等）不再作为类出现——`owl:equivalentClass` 在 RL 推理后拆成两条 `subClassOf`，匿名端点会变成 `N<hex>` 这样的"类名"；判据用 `isinstance(x, URIRef)` 而非 `isinstance(x, BNode)`（**rdflib 的 `BNode` 继承自 `str`**，任何"按 str 兜底"的转换都会把它变成 `Literal`，使 BNode 判断恒为假）；② 多级类层次不再被压平——推理闭包里 `subjects(subClassOf, C)` 拿到的是全部后代，直接当子类用会让 `Pump ⊑ Equipment ⊑ Asset` 的 `Pump` 挂到 `Asset` 下；③ 类层次改为递归展开，第三级不再消失（此前只展开"顶层 + 直接子类"两代）。`agent_task` 只有一级类层次且无匿名类，三个洞都没被照出来
 - **`/api/health` 的 `reasoner` 描述改由领域声明**：`REASONER_SUMMARY`（`AdapterBase` 默认 `"OWL 2 RL (owlrl)"`）。此前写死 `"OWL 2 RL (owlrl) + 业务规则 R2/R4"`——R2/R4 是 `agent_task` 的规则编号，异构领域的运维探针会报告两条它根本没有的规则
-- 后端测试 178 → 236 → 290 → 308 → 322 → 342 → 362 → 370 项；`tests/_helpers.py` 统一提供 `domain_module()` / `submodule()`，conftest 不再往 `sys.modules` 塞别名；`isolated_api` 夹具把会写盘的用例（reload / save-overwrite）挪到 tmp 副本，全量跑完运行态 `domains/<name>/` 的内容哈希与本体哈希均不变；未安装领域时（CI 干净检出）自动以临时副本运行，干净检出可直接跑且不写脏 `examples/`
+- 后端测试 178 → 236 → 290 → 308 → 322 → 342 → 362 → 370 → 393 项；`tests/_helpers.py` 统一提供 `domain_module()` / `submodule()`，conftest 不再往 `sys.modules` 塞别名；`isolated_api` 夹具把会写盘的用例（reload / save-overwrite）挪到 tmp 副本，全量跑完运行态 `domains/<name>/` 的内容哈希与本体哈希均不变；未安装领域时（CI 干净检出）自动以临时副本运行，干净检出可直接跑且不写脏 `examples/`
 - **能力门禁与契约同源（P2-4）**：`/api/reason` 由 `if/elif` 枚举改为 `REASON_KINDS` 表驱动，支持清单 = 表键 ∩ 领域 `CAPABILITIES`；门禁判据改用 `undeclared_missing`——只声明部分能力的领域调未声明能力返 **400（未声明）** 而非 501（契约破损），501 只留给"声明了却没实现"
 - **形状文件随领域包走（P3-1/2）**：`pipeline/shapes/agent_task.ttl` → `examples/agent_task/shapes/agent_task.ttl`；`gates.json` 的 `shapes_file` 改为 `"@domain"` 哨兵，由 G4 按运行态配置从当前领域包解析（包内 `config.json` 的 `shapes_file` → 包内 `shapes/*.ttl`）。删掉 `mcp.py` 里"上溯三级到仓库根"的兜底——那个路径只在领域包恰好位于仓库里时成立，装到别处就静默变成"SHACL 跳过"
 - **`/api/health` 不再假设领域形状**：`agents` / `tasks` / `capabilities` 等统计在领域没有对应方法/配置时给 0，而不是 500。此前它写死了 `agent_task` 的字段，切到最小领域即崩
@@ -44,6 +46,7 @@
 - **宿主侧五个模块转为 re-export shim（P4）**：`reasoner/protocol.py` / `semantic.py` / `derivation.py` / `abox.py` / `plugin.py` 只剩转发，实现全在 SDK。转发用的是同一对象而非同名副本，因此 isinstance / issubclass 不会因两个模块名而分裂。宿主代码的 import 一行未改
 - **缺 SDK 时给可执行的提示**：`reasoner/engine.py` 捕获 `ModuleNotFoundError` 并改写为安装命令（仅当 `exc.name == "ontology_plugin_sdk"`，SDK 自己缺依赖时原样抛出，不替它背锅）。此前拉下分支却没重装依赖的人只会看到一句 `No module named 'ontology_plugin_sdk'`，看不懂该做什么
 - `agent_task` 适配器从 1391 行降到 591 行（ABox 205 行、CQ 502 行上移框架后）
+- **`classify` 移出契约，`create` 补位**（契约仍是 7 个方法，但少了一个领域的形状）：`classify(name, capabilities, constraints, risk_level)` 把「智能体任务编排」的四个字段写进了框架，异构领域只能落个"声明不提供"。现在契约只要求 `create(payload)`，字段形状来自领域自己的 `ENTITY_SCHEMA`；`classify` 作为 `agent_task` 的领域方法保留（MCP 工具仍叫这个名字，新领域的 schema 可以完全不同）
 
 ### BREAKING CHANGE
 
@@ -53,6 +56,10 @@
 - 领域包的 import 路径变了：`from reasoner.plugin import ...` → `from ontology_plugin_sdk import ...`
   （`reasoner.plugin` 等仍是 shim，但已标记为兼容层，新代码不要再写）。已有领域包建议同步
   加一行 `PLUGIN_API = "1"`——不写不会报错，但也就失去了版本冲突的早期预警。
+- **`POST /api/classify` 已移除**，改用 `POST /api/entities`：
+  `{"payload": {...}, "persist": false}`，payload 的字段由当前领域的 `ENTITY_SCHEMA` 决定，
+  先 `GET /api/entities/schema` 看清楚再发。`scripts/query.py` 的 `classify` 子命令保留为
+  `create` 的别名，行为等价。
 
 ## [0.5.0] - 2026-10-28
 
