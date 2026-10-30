@@ -6,18 +6,27 @@
 
 ```
 ontology-agent-demo/
-├── reasoner/            # 通用推理引擎（OWL 2 RL + 物化 + SPARQL）
-├── domains/             # 领域适配器（内置「智能体任务编排」示例本体）
-│   └── agent_task/      #   config.json / derivation.json / adapter.py / mcp.py
-├── api/                 # FastAPI REST 服务（api/main.py）
-├── mcp/                 # MCP Server（Model Context Protocol）
+├── packages/            # ontology-plugin-sdk：领域包唯一依赖（契约 / CQ / ABox / fakes）
+├── reasoner/            # 宿主：通用推理引擎 + proof + pipeline_gate + plugin 兼容层
+├── domains/             # 运行态领域包（由 examples/ 安装，DomainManager 统一管理）
+│   ├── manager.py       #   三级热切换：L1 本体重载 / L2 同包重载 / L3 跨包切换
+│   ├── installer.py     #   domain install / uninstall 的安装逻辑
+│   └── agent_task/      #   默认领域（adapter.py / mcp.py / config.json / shapes/）
+├── examples/            # 领域包源，domain install 的来源
+│   ├── agent_task/      #   完整领域（7 能力 / R2 R4 / 9 个 MCP 工具）
+│   ├── fault_diag/      #   异构领域（自带 diagnose 能力，证明 not hardcoded）
+│   └── _minimal/        #   最小骨架（零 CLI 复制的验收物）
+├── api/                 # FastAPI REST 服务（api/main.py，29 个端点）
+├── mcp/                 # MCP Server（26 个工具：领域 9 / 通用 12 / 建模 5）
 ├── frontend/            # 前端
 │   ├── index.html       #   旧单页（回退）
 │   └── app/             #   本体图谱工作台（React 19 + Vite + Cytoscape）
-├── scripts/             # start.sh / demo.sh / query.py（CLI）/ build_ontology.py
-├── tests/               # 后端 pytest（38 项）
+├── scripts/             # start.sh / demo.sh / query.py（CLI）/ ontologyctl.py / build_ontology.py
+├── tests/               # 后端 pytest（380 项）
+├── config/              # 运行配置（domain.example.json / loader.py）
+├── pipeline/            # 建模流水线闸门配置（gates.json）
 ├── docs/                # 设计文档 + 《本体上手指南》系列（docs/guide/）
-├── docs/guide/          # 指南源码（MkDocs 站点由 GitHub Pages 自动构建）
+├── docs/guide/          # 指南源码（MkDocs 站点由 CI 自动构建）
 ├── Dockerfile           # 多阶段构建：Node 编译前端 → Python 运行时
 └── .github/workflows/   # ci.yml（后端+前端双 job）/ pages.yml（指南部署）
 ```
@@ -122,7 +131,7 @@ npm run build          # 生产构建（typecheck + vite build）
 推送 `main` 或开 PR 时自动运行：
 
 - **CI**（`.github/workflows/ci.yml`）：后端 pytest（Python 3.10 / 3.11 / 3.12 矩阵）+ 前端 typecheck / vitest / build
-- **Pages**（`.github/workflows/pages.yml`）：MkDocs 构建《本体上手指南》并部署到 https://jasony62.github.io/ontology-agent-demo/
+- **Pages**（`.github/workflows/pages.yml`）：MkDocs 构建《本体上手指南》并部署为在线文档站
 
 合并前确保 CI 通过；本地能复现的失败不要期望 CI 通过。
 
