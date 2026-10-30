@@ -1,0 +1,42 @@
+{
+  "name": "_default",
+  "description": "通用 CQ 驱动建模模板（框架默认；领域可用 cq_prompts.json 覆盖任一字段）",
+  "namespace_hint": "http://example.org/ontology#",
+  "format_instruction": "只输出合法 Turtle。类用 owl:Class，属性用 owl:ObjectProperty；可以省略 @prefix，但要用一致的完整 IRI 或统一前缀。只定义类与属性（TBox），严禁写入任何个体/实例断言（ABox）。",
+  "axiom_patterns": {
+    "hierarchy": "类层次：子类用 rdfs:subClassOf 声明，至少形成一棵树",
+    "relation": "关系：对象属性连接两个类，建议给出 domain/range",
+    "transitive": "传递：需要跨层级传播的关系声明 owl:TransitiveProperty",
+    "chain": "链式：需要经由中间关系推导的关系声明 owl:propertyChainAxiom"
+  },
+  "checklist": [
+    "只含类/属性/公理，不含任何个体断言",
+    "至少声明 1 个 owl:Class 与 1 个 owl:ObjectProperty",
+    "术语命名空间一致（同一前缀）",
+    "CQ 若涉及传递关系，应声明 TransitiveProperty；涉及关系推导，应声明 propertyChainAxiom"
+  ],
+  "schema_terms": {
+    "classes": [],
+    "properties": []
+  },
+  "cq_generation": {
+    "type_taxonomy": {
+      "retrieval": "查取值/查关系：问『是什么』『有哪些』",
+      "counting": "计数：问『几个』『多少』",
+      "derived": "推导：问『为什么』『谁能够』『依赖如何传递』",
+      "negative": "否定/约束：问『哪些不能』『哪些不允许』"
+    },
+    "suggested_mix": {
+      "retrieval": 3,
+      "counting": 2,
+      "derived": 2,
+      "negative": 1
+    },
+    "phrasing_rules": [
+      "题干必须是疑问句（问号结尾或含疑问代词）",
+      "题干至少命中一个 schema 类/属性短名，避免过宽",
+      "一题一问，不把多个问题用『并且』串起来",
+      "不出现具体实例值（建模期问能力，不问数据）"
+    ]
+  }
+}

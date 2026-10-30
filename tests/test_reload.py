@@ -2,7 +2,11 @@
 
 覆盖：API reload 端点（新扩展生效 / 损坏回退）、health/status 扩展字段、
 dirty 增量语义、MCP 工具闭包工厂动态解析、mcp_server 导入冒烟。
-reload 用例在真实 extensions/ 目录上做临时文件实验，测后清理，保持仓库干净。
+
+reload 用例操作的是 `isolated_api` 提供的**领域副本**（tmp_path），
+不再往运行态 `domains/<name>/extensions/` 写临时文件（P3-5）：
+写真实目录时，测试一旦中途失败就会留下坏 ttl，后续所有 reload 用例
+成片失败——排查成本远高于多复制一份领域包。
 """
 
 import os
@@ -14,40 +18,33 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from reasoner.engine import ONTO_PATH, DEFAULT_NS  # noqa: E402
-from domains.agent_task import ONTO_FILE  # noqa: E402
 
-EXTENSIONS_DIR = os.path.join(os.path.dirname(ONTO_FILE), "extensions")
+from _helpers import domain_module, submodule  # noqa: E402
 
 
-# ---------------- 工具：临时扩展文件（测后清理） ----------------
+
+# ---------------- 工具：临时扩展文件（落在领域副本里，不碰运行态） ----------------
 
 class _TempExt:
-    """在真实 extensions/ 目录临时放置扩展文件，退出时清理。"""
+    """在隔离副本的 extensions/ 里放置扩展文件。
 
-    def __init__(self):
-        self.created = []
-        os.makedirs(EXTENSIONS_DIR, exist_ok=True)
+    副本目录本身由 tmp_path 管理，测试结束时 pytest 自行清理——
+    不再需要"测后删文件"的补偿逻辑（那种逻辑在失败路径上根本不执行）。
+    """
 
-    def add(self, fname: str, body: str):
-        path = os.path.join(EXTENSIONS_DIR, fname)
+    def __init__(self, base: str):
+        self.base = base
+
+    def add(self, fname: str, body: str) -> str:
+        path = os.path.join(self.base, fname)
         with open(path, "w") as f:
             f.write(body)
-        self.created.append(path)
         return path
-
-    def cleanup(self):
-        for p in self.created:
-            if os.path.exists(p):
-                os.unlink(p)
-        if os.path.isdir(EXTENSIONS_DIR) and not os.listdir(EXTENSIONS_DIR):
-            os.rmdir(EXTENSIONS_DIR)
 
 
 @pytest.fixture()
-def tmp_ext():
-    t = _TempExt()
-    yield t
-    t.cleanup()
+def tmp_ext(isolated_api):
+    return _TempExt(str(isolated_api.extensions))
 
 
 def _ext_ttl(name: str) -> str:
@@ -57,10 +54,9 @@ def _ext_ttl(name: str) -> str:
 
 # ---------------- P2-1 API reload 端点 ----------------
 
-def test_reload_new_extension_effective(tmp_ext, monkeypatch):
+def test_reload_new_extension_effective(tmp_ext, isolated_api):
     """改扩展文件 → reload → 无需重启，新定义生效。"""
-    from api.main import app
-    client = TestClient(app)
+    client = isolated_api.client
     tmp_ext.add("20261021-000000-test-t_reload_new.ttl", _ext_ttl("t_reload_new"))
     r = client.post("/api/ontology/reload")
     assert r.status_code == 200
@@ -70,10 +66,9 @@ def test_reload_new_extension_effective(tmp_ext, monkeypatch):
     assert "t_reload_new" in rr.json()["individuals"]
 
 
-def test_reload_broken_keeps_old_state(tmp_ext):
+def test_reload_broken_keeps_old_state(tmp_ext, isolated_api):
     """损坏扩展文件 → reload 返回 400，旧本体继续可用。"""
-    from api.main import app
-    client = TestClient(app)
+    client = isolated_api.client
     # 先建立一个基线个体，确认 reload 前可见
     tmp_ext.add("20261020-000000-test-t_reload_base.ttl", _ext_ttl("t_reload_base"))
     client.post("/api/ontology/reload")
@@ -129,7 +124,7 @@ def test_dirty_increment_on_classify():
         "name": "t_dirty_probe", "capabilities": ["Coding"], "constraints": [],
         "risk_level": 3, "persist": False,
     })
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     after = client.get("/api/ontology/status").json()["pending_changes"]
     assert after == before + 1
     h = client.get("/api/health").json()
@@ -155,8 +150,9 @@ class _FakeServer:
 def test_mcp_tools_follow_adapter_factory():
     """工具闭包绑定 get_adapter 工厂：切换工厂后工具作用于新实例。"""
     from reasoner.engine import OntologyEngine
-    from domains.agent_task import AgentTaskAdapter, DEFAULT_CONFIG
-    from domains.agent_task.mcp import register_tools
+    _d = domain_module()
+    AgentTaskAdapter, DEFAULT_CONFIG = _d.AgentTaskAdapter, _d.DEFAULT_CONFIG
+    register_tools = submodule(domain_module(), "mcp").register_tools
 
     engine = OntologyEngine(ONTO_PATH)
     a1 = AgentTaskAdapter(engine, DEFAULT_CONFIG)
@@ -193,24 +189,28 @@ def test_mcp_server_import_smoke():
     assert hasattr(mcp_server, "main")
 
 
-def test_engine_detects_newly_created_ext_dir():
+def test_engine_detects_newly_created_ext_dir(tmp_path):
     """issue #6 根因回归：OntologyEngine(onto, None)（MCP _reload 语义）在
     extensions/ 目录启动后新建时能重新检测并启用——SIGHUP 热重载后
-    persist=true 无需重启即可写盘。"""
+    persist=true 无需重启即可写盘。
+
+    在 tmp 副本上验证（P3-5）：这个用例要"目录先不存在、再被创建"，
+    真实运行态里做这件事会顺手改掉服务正在用的扩展目录状态。
+    """
+    import shutil
+
     from reasoner.engine import OntologyEngine
 
-    # 清场：确保 extensions/ 当前不存在（避免污染测试前提）
-    if os.path.isdir(EXTENSIONS_DIR) and not os.listdir(EXTENSIONS_DIR):
-        os.rmdir(EXTENSIONS_DIR)
-    try:
-        e1 = OntologyEngine(ONTO_FILE, extensions_dir=None)
-        assert e1.extensions_dir is None          # 启动时无目录 → 未启用
-        os.makedirs(EXTENSIONS_DIR, exist_ok=True)  # 模拟运行期新建增量目录
-        e2 = OntologyEngine(ONTO_FILE, extensions_dir=None)  # 等价 _reload 的 _load(ONTO_FILE)
-        assert e2.extensions_dir == EXTENSIONS_DIR  # 重新检测 → 启用
-    finally:
-        if os.path.isdir(EXTENSIONS_DIR) and not os.listdir(EXTENSIONS_DIR):
-            os.rmdir(EXTENSIONS_DIR)              # 保持仓库干净
+    onto = tmp_path / "onto.owl"
+    shutil.copy2(ONTO_PATH, onto)
+    ext = tmp_path / "extensions"
+
+    e1 = OntologyEngine(str(onto), extensions_dir=None)
+    assert e1.extensions_dir is None              # 启动时无目录 → 未启用
+
+    ext.mkdir()                                   # 模拟运行期新建增量目录
+    e2 = OntologyEngine(str(onto), extensions_dir=None)   # 等价 _reload 的 _load(ONTO_FILE)
+    assert os.path.realpath(str(e2.extensions_dir)) == os.path.realpath(str(ext))
 
 
 def test_sighup_handler_signature_compat():

@@ -1,42 +1,434 @@
-"""领域适配器注册表：运行时动态加载独立目录 domains/ 下的领域包。
+"""领域包加载器：从配置指定的 root 加载任意位置的领域包。
 
-约定（插件式）：
-    - 每个领域一个子目录/包，如 domains/agent_task/；
-    - 包内必须暴露：
-        NAME          str   领域标识（默认取目录名）
-        DESCRIPTION   str   领域说明（展示给智能体/用户）
-        create_adapter(engine, config=None) -> 适配器实例
-    - 适配器实例包装通用引擎（reasoner.engine.OntologyEngine），
-      用通用原语实现该领域的查询语义；引擎本身不包含任何领域知识。
+与旧实现的差别（旧实现只能加载包内目录）：
+    旧：importlib.import_module(f"domains.{name}")——只认 domains/ 下的子目录
+    新：spec_from_file_location + submodule_search_locations——可加载任意路径，
+        同时保持包语义，`from . import cq` 之类相对导入仍然有效
 
-用法:
-    from domains import list_domains, load_domain
-    list_domains()                        # [{"name","description","module"}, ...]
-    adapter = load_domain("agent_task", engine, config=None)
+为什么不直接用 `importlib.util.spec_from_file_location("x", "__init__.py")`：
+    缺少 submodule_search_locations 时模块不是合法包，
+    包内任何 `from .xxx import` 都会抛
+    `ImportError: attempted relative import with no known parent package`。
+
+模块命名约定：
+    加载后的全名固定为 `domains.<name>`（无论物理位置在哪），
+    这样子模块会自然注册为 `domains.<name>.mcp` 等，
+    既有 `from domains.agent_task import mcp` 与 conftest 别名都无需特判。
+
+约定（契约声明见 reasoner/protocol.py）：
+    NAME          str    领域标识（缺省取目录名）
+    DESCRIPTION   str    领域说明
+    ONTO_FILE     str    本体文件名（可选，缺省在包内找 *.owl）
+    CAPABILITIES  list   声明本领域提供哪些能力（声明即承诺，见下）
+    create_adapter(engine, config=None) -> 适配器实例
+
+CAPABILITIES 的三态语义（P1-1 起强制校验）：
+    缺省 / None   视为全量能力 → 7 个契约方法缺一个就在加载时失败
+    ("a", "b")    声明即承诺 → 清单内必须实现，清单外视为不提供
+    ()            零能力领域（只有通用层端点可用）
+
+用法：
+    from domains import list_domains, load_domain, load_domain_module
+    list_domains()                          # [{"name","description","module"}, ...]
+    adapter = load_domain("agent_task", engine)
+    mod = load_domain_module("agent_task")  # 需要模块本身时（conftest/测试）
 """
 
+from __future__ import annotations
+
 import importlib
-import os
+import importlib.util
+import json
+import shutil
+import sys
+from pathlib import Path
+from types import ModuleType
 
-_DOMAINS_DIR = os.path.dirname(os.path.abspath(__file__))
+from config import ConfigError, DomainConfig, load_config
+
+# 注意：本模块属于**引导链**——`reasoner/__init__.py` 会在 import 期固化
+# ONTO_PATH，而 ONTO_PATH 又依赖本模块的 default_onto_path()。若在此处顶层
+# import reasoner.*，就形成 import 期循环，且 CI 干净检出（domains/ 为空）时
+# 引擎引导路径会先被算成空路径再被缓存。契约校验不是热路径，延迟导入即可。
+
+__all__ = [
+    "DomainContractError",
+    "DomainNotFoundError",
+    "default_onto_path",
+    "get_config",
+    "list_domains",
+    "load_domain",
+    "load_domain_module",
+    "package_onto_path",
+    "package_shapes_path",
+    "refresh_config",
+]
+
+_MODULE_PREFIX = "domains"
+_cached_config: DomainConfig | None = None
 
 
-def list_domains() -> list[dict]:
-    """枚举 domains/ 下所有可用领域包（约定式发现，运行时动态）。"""
-    out = []
-    for entry in sorted(os.listdir(_DOMAINS_DIR)):
-        if entry.startswith("_") or not os.path.isdir(os.path.join(_DOMAINS_DIR, entry)):
-            continue
-        mod = importlib.import_module(f"domains.{entry}")
-        out.append({
-            "name": getattr(mod, "NAME", entry),
-            "description": getattr(mod, "DESCRIPTION", ""),
-            "module": entry,
-        })
+class DomainNotFoundError(ConfigError):
+    """root 下找不到指定的领域包。"""
+
+
+class DomainContractError(ConfigError):
+    """领域包存在，但不满足最小契约。"""
+
+
+# ---------------------------------------------------------------- 配置
+
+
+def get_config(refresh: bool = False) -> DomainConfig:
+    """当前运行态配置（进程内缓存；refresh=True 重新读取文件）。"""
+    global _cached_config
+    if refresh or _cached_config is None:
+        _cached_config = load_config()
+    return _cached_config
+
+
+def refresh_config() -> DomainConfig:
+    """强制重新读取配置，返回新配置。"""
+    return get_config(refresh=True)
+
+
+# ---------------------------------------------------------------- 包加载
+
+
+def _module_name(name: str) -> str:
+    return f"{_MODULE_PREFIX}.{name}"
+
+
+def _ensure_parent_package() -> None:
+    """确保 `domains` 父包在 sys.modules 中（相对导入依赖它）。"""
+    if _MODULE_PREFIX not in sys.modules:
+        importlib.import_module(_MODULE_PREFIX)
+
+
+def _snapshot(full: str) -> dict[str, ModuleType]:
+    """记录某包及其全部子模块的当前模块对象，用于失败回滚。"""
+    return {
+        key: mod
+        for key, mod in list(sys.modules.items())
+        if key == full or key.startswith(full + ".")
+    }
+
+
+def _purge(full: str) -> None:
+    for key in [
+        key
+        for key in list(sys.modules)
+        if key == full or key.startswith(full + ".")
+    ]:
+        del sys.modules[key]
+
+
+def _restore(snapshot: dict[str, ModuleType]) -> None:
+    for key, mod in snapshot.items():
+        sys.modules[key] = mod
+
+
+def _drop_bytecode_cache(pkg_dir: Path) -> None:
+    """删掉领域包内的 `__pycache__`，让 reload 真的重读源码。
+
+    为什么非删不可：CPython 判定 .pyc 是否可用只比对（源文件 mtime 秒, 文件大小）。
+    `VALUE = 1` 改成 `VALUE = 2` 这种改动**大小不变**，若编辑落在同一秒内，
+    旧 pyc 被判为新鲜，reload 表面成功、实际跑的是上一版代码——热重载最不该
+    出现的失败模式：不报错，只是没生效。
+
+    这个 bug 在 macOS 开发机上一直看不见：WorkBuddy 注入的 sitecustomize 把
+    `sys.dont_write_bytecode` 设成了 True，本地根本不产生 pyc。CI（Linux）上
+    一跑就红。
+    """
+    for cache in pkg_dir.rglob("__pycache__"):
+        shutil.rmtree(cache, ignore_errors=True)
+
+
+def _package_dir(name: str, settings: DomainConfig | None, root: str | Path | None) -> Path:
+    if root is not None:
+        base = Path(root).expanduser().resolve()
+        candidate = (base / name).resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError as exc:  # 防御：理论上 name 已过 check_domain_name
+            raise ConfigError(f"领域目录越界：{candidate} 不在 {base} 之内") from exc
+        return candidate
+    return (settings or get_config()).domain_dir(name)
+
+
+def load_domain_module(
+    name: str,
+    *,
+    settings: DomainConfig | None = None,
+    root: str | Path | None = None,
+    reload: bool = False,
+) -> ModuleType:
+    """把领域包加载为合法的 Python 包并返回模块对象。
+
+    - 已从同一路径加载过且未要求 reload 时直接复用，避免类对象身份分裂
+      （同一进程里出现两份 `AgentTaskAdapter` 会让 isinstance 判断失效）；
+    - reload=True 先移除旧模块再重建，失败则整体回滚到加载前的状态。
+    """
+    pkg_dir = _package_dir(name, settings, root)
+    init_py = pkg_dir / "__init__.py"
+    if not init_py.is_file():
+        hint = ""
+        if root is None:
+            installed = (settings or get_config()).installed()
+            if installed:
+                hint = f"；当前 root 下已安装：{', '.join(installed)}"
+        raise DomainNotFoundError(
+            f"找不到领域包 {name!r}：{init_py} 不存在{hint}"
+        )
+
+    full = _module_name(name)
+
+    existing = sys.modules.get(full)
+    if existing is not None and not reload:
+        existing_file = getattr(existing, "__file__", None)
+        if existing_file and Path(existing_file).resolve() == init_py.resolve():
+            return existing
+
+    _ensure_parent_package()
+    snapshot = _snapshot(full)
+    _purge(full)
+    if reload:
+        # 只对 reload 清缓存：首次加载时 pyc 是有效的，删了每次启动都多编译一遍
+        _drop_bytecode_cache(pkg_dir)
+
+    spec = importlib.util.spec_from_file_location(
+        full,
+        init_py,
+        submodule_search_locations=[str(pkg_dir)],  # 缺这行，包内相对导入必炸
+    )
+    if spec is None or spec.loader is None:
+        _restore(snapshot)
+        raise DomainContractError(f"无法为领域包 {name!r} 构建导入规格：{init_py}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[full] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        _purge(full)
+        _restore(snapshot)
+        raise
+
+    return module
+
+
+# ---------------------------------------------------------------- 契约与工厂
+
+
+def _api_major(value) -> str:
+    return str(value).strip().split(".")[0]
+
+
+def _validate_api_version(name: str, module: ModuleType) -> None:
+    """领域包声明的 `PLUGIN_API` 主版本必须与当前 SDK 兼容（P4）。
+
+    三态，与 `CAPABILITIES` 的处理方式同构：
+      - 未声明 → 视为 "1"。P0–P3 的领域包都没写这一行，加了校验就让它们
+        启动失败是不可接受的——兼容性不能靠"补一行声明"来假装达成；
+      - 声明 "1" / "1.x" → 通过；
+      - 声明其它主版本 → 拒绝。
+
+    为什么必须拒绝而不是告警降级：主版本不同意味着签名可能已经变了，
+    继续加载只会在某个请求进来时以 AttributeError / TypeError 暴露，
+    那时离"版本不匹配"这个根因已经很远，而且现场是生产流量。
+    """
+    from ontology_plugin_sdk import PLUGIN_API, __version__
+
+    declared = getattr(module, "PLUGIN_API", None)
+    if declared is None:
+        return
+    if _api_major(declared) != _api_major(PLUGIN_API):
+        raise DomainContractError(
+            f"领域包 {name!r} 声明 PLUGIN_API={declared!r}，"
+            f"与当前 SDK（{PLUGIN_API}，ontology-plugin-sdk {__version__}）"
+            f"主版本不兼容；请升级领域包或退回匹配的 SDK 版本。"
+        )
+
+
+def _validate_contract(name: str, module: ModuleType) -> None:
+    _validate_api_version(name, module)
+    if not callable(getattr(module, "create_adapter", None)) and not callable(
+        getattr(module, "create_adapter_ctx", None)
+    ):
+        raise DomainContractError(
+            f"领域包 {name!r} 未提供 create_adapter(engine, config=None) 或 "
+            f"create_adapter_ctx(ctx)，模块 {getattr(module, '__name__', '?')} 不满足最小契约"
+        )
+
+
+def load_domain(name: str, engine, config=None, *, settings: DomainConfig | None = None):
+    """按标识加载领域适配器，并**在加载时**校验契约。
+
+    config 是**领域自己的适配器配置**（原样传给 create_adapter），
+    与运行态配置 DomainConfig（settings）不是一回事。
+
+    工厂约定（P1-4 起）：
+        优先 create_adapter_ctx(ctx)——框架能力一次性交付，领域不必
+        import 四个不同的 reasoner 内部模块；
+        没有时退回 create_adapter(engine, config)——老领域包零改动加载。
+
+    契约校验（P1-1）：缺方法且未在 CAPABILITIES 里显式排除 →
+    DomainContractError。把"漏实现"从"某个请求 500"提前到"启动即失败"，
+    代价是新领域第一次跑起来就得把契约说清楚。
+    """
+    module = load_domain_module(name, settings=settings)
+    _validate_contract(name, module)
+    factory = getattr(module, "create_adapter_ctx", None)
+    if callable(factory):
+        # 从 SDK 取上下文，而不是绕 reasoner.plugin：后者现在只是兼容 shim，
+        # 宿主自己再走 shim 没有意义，且会触发 reasoner/__init__ 的引导期副作用。
+        from ontology_plugin_sdk import PluginContext
+
+        ctx = PluginContext.for_module(module, engine, config)
+        adapter = factory(ctx)
+    else:
+        adapter = module.create_adapter(engine, config)
+    _validate_adapter(name, adapter)
+    return adapter
+
+
+def _validate_adapter(name: str, adapter) -> None:
+    from ontology_plugin_sdk import undeclared_missing
+
+    missing = undeclared_missing(adapter)
+    if not missing:
+        return
+    declared = getattr(adapter, "CAPABILITIES", None)
+    hint = (
+        "未声明 CAPABILITIES，视为要求全量能力"
+        if declared is None
+        else f"已声明 CAPABILITIES={list(declared)!r}，但清单内方法未实现"
+    )
+    raise DomainContractError(
+        f"领域包 {name!r} 的适配器未满足契约：缺 {', '.join(missing)}（{hint}）。"
+        f"契约见 ontology_plugin_sdk.protocol；只想实现部分能力时，用 CAPABILITIES "
+        f"把不实现的能力排除，或在 AdapterBase 上继承框架默认实现。"
+    )
+
+
+def list_domains(*, settings: DomainConfig | None = None) -> list[dict]:
+    """枚举 root 下已安装的领域包。
+
+    单个包加载失败不拖垮整体：该条带 error 字段，其余照常返回
+    （线上排查时"哪个领域坏了"比"整张列表拿不到"有用得多）。
+    """
+    cfg = settings or get_config()
+    out: list[dict] = []
+    for entry in cfg.installed():
+        item = {"name": entry, "description": "", "module": entry}
+        try:
+            module = load_domain_module(entry, settings=cfg)
+            item["name"] = getattr(module, "NAME", entry)
+            item["description"] = getattr(module, "DESCRIPTION", "")
+            item["capabilities"] = list(
+                getattr(module, "CAPABILITIES", [])
+            ) or None
+        except Exception as exc:  # noqa: BLE001 —— 单个包坏了不应影响枚举
+            item["error"] = f"{type(exc).__name__}: {exc}"
+        out.append(item)
     return out
 
 
-def load_domain(name: str, engine, config=None):
-    """按标识加载领域适配器：domains.<name>.create_adapter(engine, config)。"""
-    mod = importlib.import_module(f"domains.{name}")
-    return mod.create_adapter(engine, config)
+# ---------------------------------------------------------------- 引导路径
+
+
+def _declared_file(ddir: Path, key: str) -> str | None:
+    """读领域包 config.json 里声明的包内路径（显式声明优先于约定）。
+
+    `key` 为 `onto_file` / `shapes_file` 等；解析结果必须落在包内，
+    否则视为无效声明——领域包不该通过配置指到包外的文件。
+    """
+    cfg_json = ddir / "config.json"
+    if not cfg_json.is_file():
+        return None
+    try:
+        data = json.loads(cfg_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    value = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    base = ddir.resolve()
+    target = (base / value.strip()).resolve()
+    try:
+        target.relative_to(base)          # 拒绝把解析指到包外
+    except ValueError:
+        return None
+    return str(target) if target.is_file() else None
+
+
+def _declared_onto(ddir: Path) -> str | None:
+    """读领域包 config.json 的 onto_file（显式声明优先于约定）。"""
+    return _declared_file(ddir, "onto_file")
+
+
+def package_onto_path(
+    name: str,
+    *,
+    settings: DomainConfig | None = None,
+    root: str | Path | None = None,
+) -> str | None:
+    """单个领域包的核心本体路径（**不执行领域代码**）。
+
+    解析顺序：
+      1. 领域包 config.json 的 `onto_file`（显式声明，优先）
+      2. 包内唯一的 *.owl（约定：一个领域一个核心本体）
+
+    拿不到时返回 None，由调用方兜底并给出可读的错误。
+    """
+    ddir = _package_dir(name, settings, root)
+    if not ddir.is_dir():
+        return None
+    declared = _declared_onto(ddir)
+    if declared:
+        return declared
+    owls = sorted(
+        p for p in ddir.glob("*.owl") if not p.name.startswith(".")
+    )
+    return str(owls[0].resolve()) if len(owls) == 1 else None
+
+
+def package_shapes_path(
+    name: str,
+    *,
+    settings: DomainConfig | None = None,
+    root: str | Path | None = None,
+) -> str | None:
+    """领域包的 SHACL 形状文件（**不执行领域代码**）。
+
+    解析顺序与本体一致：config.json 的 `shapes_file` → 包内 `shapes/*.ttl`（唯一）。
+    形状文件随领域包走，G4 闸门与 `validate_shapes` 工具才能在任何 root 下
+    找到它——此前固定 `pipeline/shapes/<domain>.ttl` 的做法要求"领域包正好
+    位于仓库里"，安装到别处就静默 skipped。
+    """
+    ddir = _package_dir(name, settings, root)
+    if not ddir.is_dir():
+        return None
+    declared = _declared_file(ddir, "shapes_file")
+    if declared:
+        return declared
+    shapes = ddir / "shapes"
+    if shapes.is_dir():
+        ttl = sorted(p for p in shapes.glob("*.ttl") if not p.name.startswith("."))
+        if len(ttl) == 1:
+            return str(ttl[0].resolve())
+    return None
+
+
+def default_onto_path() -> str | None:
+    """配置默认领域的核心本体路径（**不执行领域代码**）。
+
+    供 reasoner.engine 解析 ONTO_PATH 的引导值。engine 是通用层，不能
+    import 领域适配器——adapter 会反向 `from reasoner.engine import local`，
+    形成循环导入。所以这里只做路径级解析，逻辑与 package_onto_path 同源。
+    """
+    cfg = get_config()
+    name = cfg.effective_default()
+    if not name:
+        return None
+    return package_onto_path(name, settings=cfg)

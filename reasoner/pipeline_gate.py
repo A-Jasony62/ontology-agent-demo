@@ -12,7 +12,7 @@
 设计纪律：
   - **fail-fast 过闸**：依次执行、遇 fail 即停，未执行闸门标 not_run（快速定位卡闸）；
   - **编排不重造**：G2 复用 owlrl 物化 + 结构冲突检查（与 cq_tbox L3 同方法论）、
-    G4 复用 pyshacl + pipeline/shapes/<domain>.ttl，本模块只做编排与证据结构化；
+    G4 复用 pyshacl + 包内 shapes/<domain>.ttl，本模块只做编排与证据结构化；
   - **诚实降级**：HermiT 未启用 → G2 显式 degraded 标注；owlready2 不可用 → G1
     降级结构断言；冒烟集为空 / shapes 缺失 → skipped 如实声明，绝不假通过；
   - **只读**：草稿在拷贝图上物化，不写回任何主图。
@@ -36,7 +36,20 @@ from rdflib import OWL, RDF, RDFS, Graph, URIRef
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _GATES_PATH = os.path.join(_REPO_ROOT, "pipeline", "gates.json")
-_DOMAINS_DIR = os.path.join(_REPO_ROOT, "domains")
+
+
+def _domains_dir() -> str:
+    """领域包根目录：按运行态配置解析（默认 domains/，示例在 examples/）。
+
+    门禁的冒烟断言集随领域包走（`<root>/<domain>/gates_smoke.json`），
+    所以不能再用仓库根下的固定 domains/——换了 root 就找不到。
+    """
+    try:
+        from config import load_config
+
+        return str(load_config().root)
+    except Exception:  # noqa: BLE001 —— 配置不可用时退回历史位置
+        return os.path.join(_REPO_ROOT, "domains")
 
 _DEFAULT_GATES = ["G1", "G2", "G3", "G4"]
 GATE_NAMES = {
@@ -74,7 +87,7 @@ def _load_gates() -> dict:
 
 def _load_smoke(domain: str) -> dict:
     """加载领域冒烟断言集 domains/<domain>/gates_smoke.json；缺失返回空。"""
-    path = os.path.join(_DOMAINS_DIR, domain, "gates_smoke.json")
+    path = os.path.join(_domains_dir(), domain, "gates_smoke.json")
     try:
         with open(path, encoding="utf-8") as f:
             cfg = json.load(f)
@@ -210,20 +223,40 @@ def _gate_g3(g: Graph, domain: str, degraded: list) -> dict:
     }
 
 
+SHAPES_FROM_DOMAIN = "@domain"
+
+
+def _resolve_shapes(shapes_file: str, domain: str) -> str | None:
+    """G4 形状文件定位。
+
+    `@domain` 哨兵（推荐）：形状文件随领域包走，按运行态配置定位
+    （包内 config.json 的 `shapes_file` → 包内 `shapes/*.ttl`）。
+    绝对 / 相对仓库根的路径保留兼容——但那是"仓库里正好有这个文件"的
+    假设，领域包装到别处就失效，所以默认配置已改为 `@domain`。
+    """
+    if not shapes_file or shapes_file == SHAPES_FROM_DOMAIN:
+        from domains.registry import package_shapes_path   # 延迟导入：避免引导链耦合
+
+        return package_shapes_path(domain) if domain else None
+    if os.path.isabs(shapes_file):
+        return shapes_file
+    return os.path.join(_REPO_ROOT, shapes_file)
+
+
 def _gate_g4(g: Graph, domain: str, degraded: list) -> dict:
-    """G4 SHACL + 测试：数据形状约束（pyshacl + pipeline/shapes/<domain>.ttl）。
+    """G4 SHACL + 测试：数据形状约束（pyshacl + 领域包内 shapes）。
 
     行为基线（pytest / cq_regression）为挂钩位：cq_regression 落地后自动纳入测试段。
     """
     shapes_file = _load_gates().get("G4_shacl_tests", {}).get(
-        "shapes_file", os.path.join("pipeline", "shapes", f"{domain}.ttl"))
-    shapes_path = (shapes_file if os.path.isabs(shapes_file)
-                   else os.path.join(_REPO_ROOT, shapes_file))
-    if not os.path.isfile(shapes_path):
+        "shapes_file", SHAPES_FROM_DOMAIN)
+    shapes_path = _resolve_shapes(shapes_file, domain)
+    if not shapes_path or not os.path.isfile(shapes_path):
         return {
             "gate": "G4_shacl_tests",
             "status": "skipped",
-            "evidence": {"reason": f"SHACL 形状文件不存在（{shapes_path}），G4 如实跳过（非假通过）"}
+            "evidence": {"reason": (f"SHACL 形状文件不存在（{shapes_path or '未解析到'}），"
+                                    "G4 如实跳过（非假通过）")}
         }
     try:
         import pyshacl
@@ -290,14 +323,29 @@ _CHECKERS = {
 
 # ---------------- 编排：fail-fast 过闸 ----------------
 
+def _default_domain() -> str:
+    """运行态配置的默认领域；配置不可用时返回空串（G3/G4 如实 skipped）。"""
+    try:
+        from config import load_config
+
+        return load_config().effective_default() or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def run_gates(ttl: str, abox: str | None = None,
-              gates: list[str] | None = None, domain: str = "agent_task") -> dict:
+              gates: list[str] | None = None, domain: str | None = None) -> dict:
     """对建模草稿（Turtle）跑四道闸门，fail-fast；返回逐闸 trace 与整体结论。
 
     - ttl：TBox 草稿（必需）；abox：可选 ABox 数据（合并后一起过闸）
     - gates：闸门子集（如 ["G3"] 单闸调试）；None=按 pipeline/gates.json；[] → 全 skipped
-    - domain：领域包名（决定 G3 冒烟断言集与 G4 shapes 文件，默认 agent_task）
+    - domain：领域包名（决定 G3 冒烟断言集与 G4 shapes）；None=按运行态配置的默认领域
     """
+    # None = 用运行态默认领域；空串 = 显式"无领域"（G3/G4 如实跳过）。
+    # 若写成 `domain or _default_domain()`，空串会被悄悄换成默认领域，
+    # "没有领域"这个合法状态就表达不出来了。
+    if domain is None:
+        domain = _default_domain()
     trace, degraded = [], []
 
     # G0 前置解析：语法错 → fail-fast 带位置信息（后续闸门不执行）

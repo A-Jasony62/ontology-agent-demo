@@ -15,8 +15,12 @@ from rdflib.namespace import RDF, RDFS, OWL
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from reasoner.engine import OntologyEngine, ONTO_PATH, DEFAULT_NS, local  # noqa: E402
-from domains.agent_task import AgentTaskAdapter, DEFAULT_CONFIG  # noqa: E402
 from scripts.build_ontology import _extra_checks  # noqa: E402
+
+from _helpers import domain_module, submodule  # noqa: E402
+
+_d = domain_module()
+AgentTaskAdapter, DEFAULT_CONFIG = _d.AgentTaskAdapter, _d.DEFAULT_CONFIG
 
 NS = __import__("reasoner.engine", fromlist=["NS"]).NS
 

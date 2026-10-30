@@ -9,8 +9,12 @@
     add_type / add_triple / add_literal / reparse / topological_sort
 
 领域语义（能力匹配 / 编排 / 分配合规 / 分类 / 图谱导出）不在本文件——
-由独立目录 domains/ 下的领域适配器在运行时动态加载（见 domains/__init__.py），
+由配置指定 root 下的领域适配器在运行时动态加载（默认 `domains/`，
+随仓库分发的示例在 `examples/`，见 domains/__init__.py），
 适配器把本引擎当作通用图 + 推理服务使用。
+
+引导路径：ONTO_PATH 在 import 时按运行态配置解析（见 `_resolve_onto_path`），
+因此“默认本体是哪个”由配置决定，本文件不含任何具体领域名词。
 """
 
 import os
@@ -19,101 +23,84 @@ from datetime import date
 from rdflib import Graph, Namespace, URIRef, Literal, BNode, RDF, RDFS, OWL
 import owlrl
 
-ONTO_PATH = os.path.abspath(
+# 两个纯函数来自领域插件 SDK：领域包的 AboxStore 也要用它们，而 SDK 不能
+# 反向依赖宿主模块（那会让"领域可脱离主仓库"这件事立刻不成立）。
+try:
+    from ontology_plugin_sdk.engine import local as _sdk_local
+    from ontology_plugin_sdk.engine import resolve_ns as _sdk_resolve_ns
+except ModuleNotFoundError as exc:
+    # SDK 是本仓库内的 workspace 包（packages/ontology-plugin-sdk），
+    # 不发布到 PyPI，所以它不在 pip 的默认搜索范围里。裸的
+    # 「No module named 'ontology_plugin_sdk'」看不出该做什么——这里换成
+    # 可直接照抄的命令。只在**确实是 SDK 缺失**时改写，SDK 内部自己缺
+    # 依赖（如 rdflib）时原样抛出，不要替它背锅。
+    if exc.name != "ontology_plugin_sdk":
+        raise
+    raise ModuleNotFoundError(
+        "缺少领域插件 SDK（ontology_plugin_sdk）。它是本仓库的 workspace 包，"
+        "不随 pip 默认索引提供，需要显式安装：\n\n"
+        "    pip install -r requirements.txt            # 已含 -e ./packages/ontology-plugin-sdk\n"
+        "或单独安装：\n"
+        "    pip install -e ./packages/ontology-plugin-sdk\n"
+    ) from exc
+
+_LEGACY_ONTO_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "domains", "agent_task", "agent_task_ontology.owl")
 )
+
+
+def _resolve_onto_path() -> str:
+    """按运行态配置解析默认领域本体。
+
+    只调用 `domains.registry.default_onto_path()`——它是纯路径解析，
+    不执行领域代码，因此不会与领域适配器（反向 import 本模块）形成循环。
+    解析不到时退回历史路径：宁可让 OntologyEngine 抛出"文件不存在"，
+    也不要让 `import reasoner.engine` 在配置缺失时直接失败。
+    """
+    try:
+        from domains.registry import default_onto_path
+
+        resolved = default_onto_path()
+    except Exception:  # noqa: BLE001 —— 引导路径不允许影响引擎可导入性
+        resolved = None
+    return resolved or _LEGACY_ONTO_PATH
+
+
+ONTO_PATH = _resolve_onto_path()
 DEFAULT_NS = "http://demo.example.org/agent-task-ontology#"
 NS = Namespace(DEFAULT_NS)  # 默认本体命名空间（兼容旧引用；实例请用 self.NS）
 
 
-def local(iri) -> str:
-    """取 IRI 的短名（最后一个 # 或 / 之后）。"""
-    s = str(iri)
-    return s.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
-
-
-# 标准词汇命名空间（自动推导默认 NS 时排除；同时覆盖带 '#' 与无 '#' 写法）
-_RESERVED_NS = {
-    "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-    "http://www.w3.org/1999/02/22-rdf-syntax-ns",
-    "http://www.w3.org/2000/01/rdf-schema#",
-    "http://www.w3.org/2000/01/rdf-schema",
-    "http://www.w3.org/2002/07/owl#",
-    "http://www.w3.org/2002/07/owl",
-    "http://www.w3.org/2001/XMLSchema#",
-    "http://www.w3.org/2001/XMLSchema",
-    "http://www.w3.org/XML/1998/namespace#",
-    "http://www.w3.org/XML/1998/namespace",
-}
+# IRI 短名：实现已迁至 ontology_plugin_sdk.engine（领域包的 AboxStore 也要用，
+# 而 SDK 不能反向依赖宿主）。这里保留同名符号，历史调用点无需改动。
+local = _sdk_local
 
 
 def _resolve_ns(onto_path: str, g: "Graph", use_xml_base: bool = True) -> str:
     """从本体自动推导默认命名空间（engine 的短名查询依赖它）。
 
-    优先级：
-      1. RDF/XML 根元素的 xml:base（本体作者的显式声明，追加 '#'），
-         仅当图中确有以该前缀开头的术语时采用（避免误导）；
-         仅单文件模式启用（多文件时文件头无全局意义）；
-      2. 断言图中最高频的 IRI 前缀——'#' 分隔优先，无 '#' 时取最后一个
-         '/' 分隔（排除 rdf/rdfs/owl/xsd 标准词汇）；频率并列取字典序最小者；
-      3. DEFAULT_NS 兜底（保持旧行为）。
+    实现已迁至 ontology_plugin_sdk.engine.resolve_ns——领域包与框架子模块
+    都要用，而 SDK 不能反向依赖宿主模块。
 
-    在原始断言图（raw，未推理）上统计，避免推理产物干扰。
+    唯一交给宿主的是**兜底值**：推导不出命名空间时该返回什么，是应用级的
+    决定（这里是 DEFAULT_NS），不是公共契约的一部分。SDK 因此把它做成参数，
+    而不是在包里焊一个常量。
     """
-    import xml.etree.ElementTree as ET
+    return _sdk_resolve_ns(onto_path, g, use_xml_base, default_ns=DEFAULT_NS)
 
-    # 1) xml:base 显式声明（仅单文件模式）
-    #    iterparse 只读到根元素即停止，避免与 rdflib 解析重复全量解析整份 XML
-    #    （rdflib 图内不保留 xml:base 信息，只能从文件头读取）。
-    if use_xml_base:
-        try:
-            base = None
-            for _event, elem in ET.iterparse(onto_path, events=("start",)):
-                base = elem.attrib.get("{http://www.w3.org/XML/1998/namespace}base")
-                break                       # 根元素即含 xml:base，无需解析完整文件
-            if base:
-                candidate = base if base.endswith("#") else base + "#"
-                for term in g.subjects():
-                    if isinstance(term, URIRef) and str(term).startswith(candidate):
-                        return candidate
-        except Exception:
-            pass
 
-    # 2) 图中最高频 IRI 前缀（排除标准词汇；并列取字典序最小，保证确定性）
-    #    单次 for s,p,o in g 遍历收集（seen 去重保持「每个术语计 1 次」的原语义，
-    #    避免对同一断言图中的高重复术语加权；字面量不含 IRI 前缀，直接跳过）。
-    from collections import Counter
-
-    counter: Counter[str] = Counter()
-    seen: set = set()
-    for s, p, o in g:
-        for term in (s, p, o):
-            if isinstance(term, Literal) or term in seen:
-                continue
-            seen.add(term)
-            text = str(term)
-            if "#" in text:
-                prefix = text.rsplit("#", 1)[0] + "#"
-            else:
-                # 无 '#' 的 IRI：取最后一个 '/' 前缀（协议+域名+路径，且短名非空）
-                head, _, tail = text.rpartition("/")
-                if not (head and tail and "//" in head):
-                    continue
-                prefix = head + "/"
-            if prefix not in _RESERVED_NS:
-                counter[prefix] += 1
-    if counter:
-        # 最高频；频率并列时取字典序最小，避免 set 迭代顺序导致的不确定
-        return min(counter, key=lambda p: (-counter[p], p))
-
-    # 3) 兜底
-    return DEFAULT_NS
+# 公开名：框架子模块（reasoner/cq/）与历史调用点用 `resolve_ns`。
+# 私有别名保留，避免已有调用点在这次搬迁里被迫改动（改的是实现归属，不是接口）。
+resolve_ns = _resolve_ns
 
 
 class OntologyEngine:
     """通用本体引擎：加载 / 推理 / 查询 / 写图原语，与本体定义无关。"""
 
-    def __init__(self, onto_path: str = ONTO_PATH, extensions_dir: str | None = None, ns: str | None = None):
+    def __init__(self, onto_path: str | None = None, extensions_dir: str | None = None, ns: str | None = None):
+        # 缺省值在调用时取模块常量，而不是在 def 时冻结：
+        # 运行期切换领域（或测试里重定向运行态 root）才能生效
+        onto_path = onto_path or ONTO_PATH
         self.onto_path = onto_path
         # 扩展增量目录：默认取核心文件同目录的 extensions/（存在才启用）
         if extensions_dir is None:
@@ -131,7 +118,7 @@ class OntologyEngine:
         # 默认命名空间：显式 ns > 从本体自动推导（xml:base / IRI 频率） > DEFAULT_NS
         # 多文件（启用 extensions）时跳过 xml:base 文件头依赖，用 IRI 频率推导
         self.NS = Namespace(ns) if ns else Namespace(
-            _resolve_ns(onto_path, self.raw, use_xml_base=self.extensions_dir is None)
+            resolve_ns(onto_path, self.raw, use_xml_base=self.extensions_dir is None)
         )
 
         # L1：OWL 2 RL 推理（属性链、传递闭包、子类/等价类分类）
@@ -173,7 +160,7 @@ class OntologyEngine:
         self._parse_sources(new_raw)
         self._parse_sources(new_g)
         owlrl.DeductiveClosure(owlrl.OWLRL_Semantics).expand(new_g)
-        new_ns = Namespace(_resolve_ns(self.onto_path, new_raw, use_xml_base=self.extensions_dir is None))
+        new_ns = Namespace(resolve_ns(self.onto_path, new_raw, use_xml_base=self.extensions_dir is None))
         # 全部成功 → 原子切换
         self.raw, self.g, self.NS = new_raw, new_g, new_ns
         return {
@@ -691,13 +678,15 @@ class OntologyEngine:
 _engine = None
 
 
-def get_engine(onto_path: str = ONTO_PATH, extensions_dir: str | None = None, ns: str | None = None) -> OntologyEngine:
+def get_engine(onto_path: str | None = None, extensions_dir: str | None = None, ns: str | None = None) -> OntologyEngine:
     """共享单例（API / MCP / CLI 复用同一份加载与推理结果）。
 
-    缓存键 = (onto_path, extensions_dir)；extensions_dir 缺省由引擎按
-    "核心文件同目录 extensions/" 自动推导（api/main.py 等既有调用无需改动）。
+    缓存键 = (onto_path, extensions_dir)；onto_path 缺省取模块常量 ONTO_PATH
+    （由运行态配置解析而来），extensions_dir 缺省由引擎按
+    "核心文件同目录 extensions/" 自动推导。
     """
     global _engine
+    onto_path = onto_path or ONTO_PATH
     key = (onto_path, extensions_dir)
     if _engine is None or (_engine.onto_path, _engine.extensions_dir) != key:
         _engine = OntologyEngine(onto_path, extensions_dir=extensions_dir, ns=ns)

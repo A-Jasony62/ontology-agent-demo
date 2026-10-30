@@ -1,0 +1,35 @@
+# 领域插件 SDK：领域包唯一允许依赖的包。
+#
+# 为什么要把这四五个模块单独拎出来：
+#   P0–P3 让领域包只 import `reasoner.plugin` 一个门面，但那个门面仍然住在
+#   主仓库里——领域包想脱离主仓库独立开发/发布，就必须连门面一起搬出去。
+#   门面里的东西恰好都不关心"这个应用是干什么的"：
+#     AdapterBase / SemanticConfig / DerivationConfig+expand / AboxStore /
+#     PluginContext / local / resolve_ns
+#   反过来，主框架关心的一切（engine 实例、FastAPI、MCP、被分析的仓库路径）
+#   都不进 SDK。这条线就是 L1 契约级与 L2 SDK 级的分界。
+#
+# 本包刻意**不**发布 PyPI：单仓 workspace 内 `pip install -e` 即可。
+# 等真有外部领域包要写，再谈发布与版本兼容——过早发布等于把还没验证的
+# 接口变成对外承诺。
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ontology-plugin-sdk"
+version = "1.0.0"
+description = "领域插件 SDK：领域适配器契约、语义配置、推导链展开与 ABox 事务仓库"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "yangyue" }]
+keywords = ["ontology", "owl", "plugin", "sdk", "adapter"]
+# 唯一硬依赖。rdflib 是本体操作的基础设施，不是"某个应用的实现细节"；
+# 想不依赖它，等于要求领域包自己重写图存储。
+dependencies = ["rdflib>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ontology_plugin_sdk*"]

@@ -3,6 +3,54 @@
 本项目所有重要变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)（SemVer）。
 
+## [Unreleased]
+
+本轮为「领域包插件化」批次：领域包从"随仓库入库的运行态"改为"可安装的插件"，加载位置与默认领域由配置决定，为后续热加载与多领域铺路。
+
+### Added
+
+- **运行态配置层 `config/`**：`domain.example.json` 随仓库分发（模板），本地 `domain.json` 入 `.gitignore`；优先级 CLI > 环境变量（`ONTOLOGY_DOMAINS_ROOT` / `ONTOLOGY_DOMAIN`）> 配置文件 > 模板回退 > 内置默认，字段级合并，逐字段记录来源便于排查
+- **`ontologyctl domain install --from <路径>`**：把任意路径的领域包装进运行态 root；先复制到 `.staging` 校验（契约符号、`ONTO_FILE` 必须解析在包内）再落盘，`--force` 覆盖前备份到 `backups/`，并写 `root/.installed/<name>.json`（来源 / 时间 / 内容哈希）
+- **领域适配器契约 `reasoner/protocol.py`**：把出口层长期鸭子调用的 7 个方法显式声明为 `AdapterProtocol`，`/api/health` 返回 `contract` 字段，缺少方法时对应端点返回 501 并附缺失清单（原为运行期 500）
+- **契约强制校验（P1-1）**：`load_domain` 加载即校验，缺方法直接 `DomainContractError`；豁免只有一条——用 `CAPABILITIES` 显式声明"我提供哪些"。三态语义：未声明 = 要求全量；声明 = 清单内必须实现；`()` = 合法的零能力领域。`AdapterBase` 提供 `explain` / `graph_export` 默认实现
+- **`reasoner/abox.py`（P1-2）**：ABox 事务（删除 / 撤回 / 批量导入 / 增量落盘 / 变更记录）从领域适配器上移到框架；业务判断（哪些谓词算引用）由领域以 `reference_predicates` 注入
+- **`reasoner/cq/`（P1-3）**：CQ 出题、质检与 TBox 草稿 L1-L5 校验上移为通用工位；框架自带领域中立 `default_prompts.json`，领域 `cq_prompts.json` 与其深合并（只写差异即可）
+- **`reasoner/plugin.py`（P1-4）**：`PluginContext` 门面——引擎 / 包目录 / 配置 / 原语 / ABox 工厂 / 日志一次性交付。加载器优先 `create_adapter_ctx(ctx)`，退回旧的 `create_adapter(engine, config)`
+- **`examples/_minimal/`（P1-5）**：零复制验收物——1 个 owl + 4 行 config + 一个只继承不实现的适配器，证明新领域不必复制 `agent_task` 任何一行
+- **`examples/fault_diag/`（第二个异构领域）**：设备故障诊断——类层次 `Asset → Equipment/Component`、主要边是 `impliesFault` 因果链、业务操作是 `diagnose`（现象 → 故障 → 处置）、故障等级由 `owl:hasValue` 推出的 `CriticalFault` 类型决定。它与 `agent_task` 在四个维度上刻意异构，用来**证伪框架的通用性假设**：不实现任务编排四件套（`capability_match` / `orchestrate` / `assign` / `classify`），并声明一个框架 `REQUIRED_METHODS` 里没有的自定义能力 `diagnose`
+- **领域热切换（P2）：`domains/manager.py` + 三个端点**——`GET /api/domains`（已安装领域 + 当前）、`POST /api/domains/reload`（L2 同包重载：重读领域代码）、`POST /api/domains/{name}/activate`（L3 跨包切换）。切换一律**先构造后替换**：构造失败旧领域继续服务并返回 400，不会停在半个领域上；成功后同步 `reasoner.engine` 单例，避免"领域换了但通用查询还查旧图"
+- **`scripts/query.py --domain <name>`**：CLI 不再硬编码 `agent_task`，领域与本体路径由运行态配置解析（与 API / MCP 同一套判据）
+- **`ontologyctl domain list / uninstall / use`（P3-3）**：`list [--scan DIR]` 列出已安装领域并标注候选目录里哪些未装/已过期（内容哈希比对，只读）；`uninstall` 先整体移入 `backups/domains/` 再移除记录，默认拒绝卸载当前默认领域；`use` 把默认领域写进 `config/domain.json`（配置文件而非内存——API / MCP / CLI 三个进程都要读它）
+- **`domains` 加载器支持任意路径**：`spec_from_file_location` + `submodule_search_locations` 构造合法包，包内相对导入保持有效；同路径复用避免类身份分裂，`reload=True` 整包重建且失败回滚
+- **`packages/ontology-plugin-sdk/`（P4，workspace 包，不发布 PyPI）**：把领域包需要的一切从宿主搬出来——`protocol`（`AdapterProtocol` / `AdapterBase` / 契约三态判据）、`semantic`（`config.json` / `derivation.json` 加载）、`derivation`（`expand` / `render_step` / `resolve`）、`abox`（`AboxStore` 事务仓库）、`context`（`PluginContext`）、`engine`（`local` / `resolve_ns` / `EngineProtocol`）、`fakes`（`FakeEngine`，让领域包能脱离宿主单测）。硬依赖只有 `rdflib`：框架关心的东西（引擎实例、FastAPI、MCP、被分析的仓库路径）一件都没进去
+- **`PLUGIN_API` 版本声明与加载期校验**：领域包用 `PLUGIN_API = "1"` 声明按哪一版插件 API 编写，`load_domain` 比对主版本，不匹配直接 `DomainContractError`。意义不是"证明我兼容"，而是让版本冲突在**加载时**暴露，而不是在某个请求进来时变成 `AttributeError`
+
+### Changed
+
+- **示例领域迁至 `examples/agent_task/`，`domains/` 成为运行态 root 并入 `.gitignore`**（部署需先执行 `domain install`）
+- **默认领域不再写死**：`api/main.py` 与 `mcp/mcp_server.py` 均按配置解析默认领域（`--domain` / `--domains-root` 可覆盖），REST API 换领域无需改源码；`reasoner.engine.ONTO_PATH` 改为 import 时按配置解析（包内 `config.json` 的 `onto_file` → 包内唯一 `*.owl` → 历史路径兜底）
+- **`mcp/policy.py`、`mcp/tool_guard.py`、`reasoner/pipeline_gate.py` 的领域目录改为按配置解析**，不再硬编码仓库下的 `domains/`
+- **SHACL 形状文件定位**：`examples/agent_task/mcp.py` 改为 环境变量 `ONTOLOGY_SHAPES_FILE` → 包内 `SHAPES_FILE` 声明 → 包内 `shapes/*.ttl`（P3 起删除"上溯三级到仓库根"的兜底）
+- **`default_graph_export` 三处修复（由 `fault_diag` 照出）**：① 匿名类（`owl:Restriction` 等）不再作为类出现——`owl:equivalentClass` 在 RL 推理后拆成两条 `subClassOf`，匿名端点会变成 `N<hex>` 这样的"类名"；判据用 `isinstance(x, URIRef)` 而非 `isinstance(x, BNode)`（**rdflib 的 `BNode` 继承自 `str`**，任何"按 str 兜底"的转换都会把它变成 `Literal`，使 BNode 判断恒为假）；② 多级类层次不再被压平——推理闭包里 `subjects(subClassOf, C)` 拿到的是全部后代，直接当子类用会让 `Pump ⊑ Equipment ⊑ Asset` 的 `Pump` 挂到 `Asset` 下；③ 类层次改为递归展开，第三级不再消失（此前只展开"顶层 + 直接子类"两代）。`agent_task` 只有一级类层次且无匿名类，三个洞都没被照出来
+- **`/api/health` 的 `reasoner` 描述改由领域声明**：`REASONER_SUMMARY`（`AdapterBase` 默认 `"OWL 2 RL (owlrl)"`）。此前写死 `"OWL 2 RL (owlrl) + 业务规则 R2/R4"`——R2/R4 是 `agent_task` 的规则编号，异构领域的运维探针会报告两条它根本没有的规则
+- 后端测试 178 → 236 → 290 → 308 → 322 → 342 → 362 项；`tests/_helpers.py` 统一提供 `domain_module()` / `submodule()`，conftest 不再往 `sys.modules` 塞别名；`isolated_api` 夹具把会写盘的用例（reload / save-overwrite）挪到 tmp 副本，全量跑完运行态 `domains/<name>/` 的内容哈希与本体哈希均不变；未安装领域时（CI 干净检出）自动以临时副本运行，干净检出可直接跑且不写脏 `examples/`
+- **能力门禁与契约同源（P2-4）**：`/api/reason` 由 `if/elif` 枚举改为 `REASON_KINDS` 表驱动，支持清单 = 表键 ∩ 领域 `CAPABILITIES`；门禁判据改用 `undeclared_missing`——只声明部分能力的领域调未声明能力返 **400（未声明）** 而非 501（契约破损），501 只留给"声明了却没实现"
+- **形状文件随领域包走（P3-1/2）**：`pipeline/shapes/agent_task.ttl` → `examples/agent_task/shapes/agent_task.ttl`；`gates.json` 的 `shapes_file` 改为 `"@domain"` 哨兵，由 G4 按运行态配置从当前领域包解析（包内 `config.json` 的 `shapes_file` → 包内 `shapes/*.ttl`）。删掉 `mcp.py` 里"上溯三级到仓库根"的兜底——那个路径只在领域包恰好位于仓库里时成立，装到别处就静默变成"SHACL 跳过"
+- **`/api/health` 不再假设领域形状**：`agents` / `tasks` / `capabilities` 等统计在领域没有对应方法/配置时给 0，而不是 500。此前它写死了 `agent_task` 的字段，切到最小领域即崩
+- **领域包的导入面收敛**：只 import `ontology_plugin_sdk`（外加 `rdflib`），不再 import `reasoner.*`；由 `tests/test_plugin.py` 的 ast 扫描断言守住。`reasoner.cq` 是唯一保留的宿主例外，且只允许出现在领域包的非核心文件（如 `cq.py` 这类工具接线）里
+- **宿主侧五个模块转为 re-export shim（P4）**：`reasoner/protocol.py` / `semantic.py` / `derivation.py` / `abox.py` / `plugin.py` 只剩转发，实现全在 SDK。转发用的是同一对象而非同名副本，因此 isinstance / issubclass 不会因两个模块名而分裂。宿主代码的 import 一行未改
+- **缺 SDK 时给可执行的提示**：`reasoner/engine.py` 捕获 `ModuleNotFoundError` 并改写为安装命令（仅当 `exc.name == "ontology_plugin_sdk"`，SDK 自己缺依赖时原样抛出，不替它背锅）。此前拉下分支却没重装依赖的人只会看到一句 `No module named 'ontology_plugin_sdk'`，看不懂该做什么
+- `agent_task` 适配器从 1391 行降到 591 行（ABox 205 行、CQ 502 行上移框架后）
+
+### BREAKING CHANGE
+
+- 领域包不再随仓库放在 `domains/` 下直接生效；`git clone` 后需执行
+  `python scripts/ontologyctl.py domain install --from ./examples/agent_task`。
+- `domains/*/` 已进 `.gitignore`，`persist=true` 产生的 `extensions/*.ttl` 不再随 git 版本化。
+- 领域包的 import 路径变了：`from reasoner.plugin import ...` → `from ontology_plugin_sdk import ...`
+  （`reasoner.plugin` 等仍是 shim，但已标记为兼容层，新代码不要再写）。已有领域包建议同步
+  加一行 `PLUGIN_API = "1"`——不写不会报错，但也就失去了版本冲突的早期预警。
+
 ## [0.5.0] - 2026-10-28
 
 本轮为「编辑器工程化」里程碑：可视化编辑器完成列表-详情式重设计，在线编辑器接入统一样式规范并对齐体验，二者共享同一套设计 token。
@@ -58,7 +106,7 @@
   - **G1 DL 格式**：防 OWL-Full（owlready2 `is_owl_full()` + 结构断言；数据属性 inverse functional 主键陷阱拦截；缺依赖时诚实降级结构断言版）
   - **G2 一致性**：owlrl 物化 + `Nothing`/disjointWith 矛盾检查 + 空类信息性提示（HermiT 为可选增强，未启用时 `mode=degraded` 显式标注，不冒充完整 DL 闸）
   - **G3 物化冒烟**：领域 `gates_smoke.json` 断言集（预期谓词 min_count，如属性链产出 can_execute ≥1）；断言集为空如实 skipped
-  - **G4 SHACL**：复用 pyshacl + `pipeline/shapes/<domain>.ttl`，violations 短名化透传；行为基线（cq_regression）为挂钩位
+  - **G4 SHACL**：复用 pyshacl + `领域包内 shapes/<domain>.ttl`，violations 短名化透传；行为基线（cq_regression）为挂钩位
   - **fail-fast 过闸**：依次执行、遇 fail 即停（后续闸门标 `not_run`），`failed_at` 一眼定位卡闸位置；每闸输出 `{status, evidence, remediation}`（打回目标对齐上游文档矩阵：G1/G2 回 S2、G3 检查骨架、G4 修数据字典或 SHACL）；`gates` 参数支持单闸调试（如 `['G3']`），空列表全部 skipped（非假通过）；只读（拷贝图物化，不写回主图）
   - **映射修正声明**：G1-G4 语义以上游文档为权威（DL格式→一致性→物化冒烟→SHACL+测试）；术语/结构层面的校验对应 `validate_tbox_draft` 的 L1-L5，不是闸门本身
 
@@ -87,7 +135,7 @@
   - 语义白名单：只暴露允许的类/谓词（含子类继承），白名单外查询被拒并返回诚实提示；策略激活时 `query_sparql` 禁用
   - 预定义查询：`predefined_queries()` / `run_predefined_query(name, params)` 受控调用，渲染后复核谓词白名单
   - **默认关闭**：未配置策略时通用工具行为与旧版逐字节一致（向后兼容硬标准）
-- 新增 SHACL 数据体检工具 `validate_shapes`（agent_task 领域包）：按 `pipeline/shapes/agent_task.ttl` 对 ABox 做 SHACL 形状校验，返回结构化报告（conforms/summary/violations，violations 逐条给出焦点个体、属性路径、约束与中文说明）。落地上游 `docs/MODELING_PIPELINE.md` §5.4 G4 已约定但未实现的 SHACL 闸门（pipeline/ 目录此前为空）；新增 `pyshacl` 依赖
+- 新增 SHACL 数据体检工具 `validate_shapes`（agent_task 领域包）：按 `domains/agent_task/shapes/agent_task.ttl` 对 ABox 做 SHACL 形状校验，返回结构化报告（conforms/summary/violations，violations 逐条给出焦点个体、属性路径、约束与中文说明）。落地上游 `docs/MODELING_PIPELINE.md` §5.4 G4 已约定但未实现的 SHACL 闸门（pipeline/ 目录此前为空）；新增 `pyshacl` 依赖
 - 新增时序 ABox 支持（主体级 `validFrom`/`validTo`）：`engine.facts_at(property, at)` 按时间过滤活跃事实，MCP 通用工具 `active_facts`——半开区间（at==from 活跃、at==to 失效）、无时间戳事实永远活跃（零回归）、失效事实进 `inactive`（失效而非删除，原始三元组仍在图中）、非法时间戳进 `warnings`。参考 Graphiti「事实失效而非删除」机制
 
 ### Fixed

@@ -38,26 +38,6 @@ EDIT_MODEL_SAMPLE = {
 }
 
 
-@pytest.fixture
-def restore_engine():
-    """save 测试后完整恢复：默认本体磁盘文件 + 单例 + api.main 全局（避免污染其它测试）。
-
-    注意：mode=overwrite 会真写磁盘（默认本体），必须恢复文件内容；否则后续
-    测试会加载到被编辑过的本体导致推理断言失败。
-    """
-    backup = None
-    with open(E.ONTO_PATH, "rb") as f:
-        backup = f.read()
-    yield
-    with open(E.ONTO_PATH, "wb") as f:
-        f.write(backup)  # 恢复磁盘默认本体
-    E._engine = None
-    new = E.get_engine()
-    M.ENGINE = new
-    from domains import load_domain
-    M.ADAPTER = load_domain("agent_task", new)
-
-
 # ---------- 编辑模型提取 ----------
 
 def test_edit_model_default_structure():
@@ -157,20 +137,25 @@ def test_save_new_enters_generic_mode(restore_engine):
     assert "通用模式" in ont.json()["detail"]
 
 
-def test_save_overwrite_keeps_domain(restore_engine):
-    """覆盖默认本体：引擎路径不变、领域推理保留。"""
+def test_save_overwrite_keeps_domain(isolated_api):
+    """覆盖当前领域本体：引擎仍指向同一文件、领域推理保留。
+
+    在领域副本上跑（P3-5）：overwrite 是真的写盘，写运行态本体意味着
+    测试中途失败就留下一个被改过的领域本体——比多复制一份包贵得多。
+    """
+    client = isolated_api.client
+    onto_path = str(isolated_api.manager.current().onto_path)
+
     model = client.get("/api/ontology/edit-model").json()
     model["classes"][0]["label"] = "改过的类名"
     r = client.post("/api/ontology/save", json={"model": model, "mode": "overwrite"})
     assert r.status_code == 200
     assert r.json()["mode"] == "overwrite"
-    import reasoner.engine as E_mod
-    assert M.ENGINE.onto_path == E_mod.ONTO_PATH  # 覆盖的是默认本体
+    assert isolated_api.module.ENGINE.onto_path == onto_path   # 覆盖的是当前领域本体
     ont = client.get("/api/ontology")
-    assert ont.status_code == 200  # 领域能力保留
-    # 文件内容已更新（编辑生效）
+    assert ont.status_code == 200                              # 领域能力保留
     m2 = client.get("/api/ontology/edit-model").json()
-    assert any(c["label"] == "改过的类名" for c in m2["classes"])
+    assert any(c["label"] == "改过的类名" for c in m2["classes"])   # 编辑已生效
 
 
 def test_save_rejects_empty_class_id(restore_engine):

@@ -31,16 +31,6 @@ MINI_OWL = """<?xml version="1.0"?>
 """
 
 
-@pytest.fixture
-def restore_engine():
-    """load 测试后恢复默认本体单例，避免污染其它测试。"""
-    yield
-    import reasoner.engine as E
-
-    E._engine = None
-    E.get_engine()
-
-
 # ---------- 物化 diff ----------
 
 def test_materialized_stats():

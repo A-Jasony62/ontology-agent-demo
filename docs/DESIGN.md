@@ -209,6 +209,12 @@ domains/<name>/
 └── <name>_ontology.owl    # 本体定义（Protege 可编辑）
 ```
 
+> **P4 起**：领域包的 import 面收敛到 `packages/ontology-plugin-sdk/`（`ontology_plugin_sdk`）
+> ——契约、语义配置加载、推导链展开、ABox 事务、`PluginContext`、引擎原语都在那里，
+> 且该包不依赖宿主。宿主侧的 `reasoner/protocol.py` / `semantic.py` / `derivation.py` /
+> `abox.py` / `plugin.py` 只剩 re-export，是兼容层而非事实源。领域包另需声明
+> `PLUGIN_API = "1"`，加载器比对主版本后决定是否加载。
+
 ### 5.2 适配器接口约定（`adapter.py` 必须暴露）
 
 ```python

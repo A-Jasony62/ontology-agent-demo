@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from reasoner.engine import OntologyEngine, ONTO_PATH, NS  # noqa: E402
 
+from _helpers import domain_module, submodule  # noqa: E402
 
 @pytest.fixture(scope="module")
 def engine():
@@ -17,7 +18,8 @@ def engine():
 
 @pytest.fixture(scope="module")
 def adapter(engine):
-    from domains.agent_task import AgentTaskAdapter, DEFAULT_CONFIG
+    _d = domain_module()
+    AgentTaskAdapter, DEFAULT_CONFIG = _d.AgentTaskAdapter, _d.DEFAULT_CONFIG
     return AgentTaskAdapter(engine, DEFAULT_CONFIG)
 
 
@@ -202,7 +204,8 @@ def test_infer_generic(engine):
 
 def test_semantic_config_switch(engine):
     """语义配置可切换：领域包内换配置后，适配器读取的是配置中的类/属性。"""
-    from domains.agent_task import AgentTaskAdapter, DEFAULT_CONFIG
+    _d = domain_module()
+    AgentTaskAdapter, DEFAULT_CONFIG = _d.AgentTaskAdapter, _d.DEFAULT_CONFIG
     cfg = DEFAULT_CONFIG.update(
         compliance_constraint_class="SecurityRequirement",  # 把合规约束换成安全要求
     )

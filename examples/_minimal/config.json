@@ -1,0 +1,7 @@
+{
+  "semantic": {
+    "item_class": "Item",
+    "top_classes": ["Item"],
+    "graph_groups": {"Item": "item_class"}
+  }
+}

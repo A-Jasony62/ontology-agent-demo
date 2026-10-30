@@ -9,7 +9,10 @@
 import json
 
 from reasoner.engine import ONTO_PATH, OntologyEngine
-from domains.agent_task import cq_gen
+
+from _helpers import domain_module, submodule  # noqa: E402
+
+cq = submodule(domain_module(), "cq")
 
 # 20 道模拟 CQ：四类各 5 道，全部带 schema 英文术语锚点，expected 为人工标注
 MOCK_CQS: list[tuple[str, str]] = [
@@ -47,7 +50,7 @@ def _engine():
 def test_guide_schema_anchored_contains_all_terms():
     """正例①：给定真实 engine → schema_anchored 模式，prompt 含全部 schema 类/属性、
     四类题型定义、建议配比与输出格式。"""
-    r = cq_gen.guide_cq_generation(_engine())
+    r = cq.guide_cq_generation(_engine())
     assert r["mode"] == "schema_anchored"
     assert "Agent" in r["schema_terms"]["classes"]
     assert "can_execute" in r["schema_terms"]["properties"]
@@ -62,7 +65,7 @@ def test_guide_schema_anchored_contains_all_terms():
 def test_validate_20_mock_cqs_usable_and_type_accuracy():
     """正例②：20 道模拟 CQ（四类各 ≥3）→ usable ≥ 18、类型预标与人工标注
     一致率 ≥ 90%、覆盖度报告四类齐全。"""
-    r = cq_gen.validate_cqs([cq for cq, _ in MOCK_CQS])
+    r = cq.validate_cqs([cq for cq, _ in MOCK_CQS])
     assert r["total"] == 20
     assert r["usable"] >= 18
     # 类型预标一致率（仅对 usable 项统计；规则式启发，门槛 90%）
@@ -85,8 +88,8 @@ def test_validate_duplicate_against_bank(tmp_path, monkeypatch):
         {"id": "T1", "cq": "哪些智能体可以执行登录模块开发？"},
         {"id": "T2", "cq": "任务依赖如何传递？"},
     ], ensure_ascii=False), encoding="utf-8")
-    monkeypatch.setattr(cq_gen, "_CQ_TESTS", str(bank_file))
-    r = cq_gen.validate_cqs(["哪些智能体可以执行 登录模块 开发？"])
+    monkeypatch.setattr(cq, "_CQ_TESTS", str(bank_file))
+    r = cq.validate_cqs(["哪些智能体可以执行 登录模块 开发？"])
     assert r["duplicate"] == 1
     assert r["results"][0]["status"] == "duplicate"
     assert r["dedup"]["skipped"] is False
@@ -95,7 +98,7 @@ def test_validate_duplicate_against_bank(tmp_path, monkeypatch):
 
 def test_validate_internal_duplicate_flagged():
     """反例①b：本次输入内同义重复（标点差异）→ 第二道标 duplicate。"""
-    r = cq_gen.validate_cqs([
+    r = cq.validate_cqs([
         "哪些 Agent 具备 Coding 能力？",
         "哪些 Agent 具备 Coding 能力！",  # 仅结尾标点差异
     ])
@@ -105,7 +108,7 @@ def test_validate_internal_duplicate_flagged():
 
 def test_validate_declarative_sentence_revised():
     """反例②：陈述句「系统能查任务」→ revise（非问题句式）。"""
-    r = cq_gen.validate_cqs(["系统能查任务"])
+    r = cq.validate_cqs(["系统能查任务"])
     assert r["revise"] == 1
     assert r["results"][0]["status"] == "revise"
     assert "非问题句式" in r["results"][0]["reason"]
@@ -113,22 +116,22 @@ def test_validate_declarative_sentence_revised():
 
 def test_validate_broad_question_revised():
     """反例③：无术语锚点的过宽题 → revise（过宽）。"""
-    r = cq_gen.validate_cqs(["系统里有什么？"])
+    r = cq.validate_cqs(["系统里有什么？"])
     assert r["results"][0]["status"] == "revise"
     assert "过宽" in r["results"][0]["reason"]
 
 
 def test_validate_empty_list_honest_error():
     """边界①：空 CQ 列表 → 诚实提示「先出题再质检」，不返回全绿假成功。"""
-    r = cq_gen.validate_cqs([])
+    r = cq.validate_cqs([])
     assert r["total"] == 0 and r["usable"] == 0
     assert "error" in r and "先出题" in r["error"]
 
 
 def test_dedup_skipped_when_no_bank(tmp_path, monkeypatch):
     """边界②：题库文件不存在 → dedup.skipped=true 且其余质检环节正常。"""
-    monkeypatch.setattr(cq_gen, "_CQ_TESTS", str(tmp_path / "not_exist.json"))
-    r = cq_gen.validate_cqs(["哪些 Agent 具备 Coding 能力？",
+    monkeypatch.setattr(cq, "_CQ_TESTS", str(tmp_path / "not_exist.json"))
+    r = cq.validate_cqs(["哪些 Agent 具备 Coding 能力？",
                              "系统能查任务"])
     assert r["dedup"]["skipped"] is True
     assert r["results"][0]["status"] == "usable"
@@ -137,7 +140,7 @@ def test_dedup_skipped_when_no_bank(tmp_path, monkeypatch):
 
 def test_guide_from_description_mode_with_focus():
     """边界③：focus 提供全新领域描述 → from_description 模式，指令降级仍完整可用。"""
-    r = cq_gen.guide_cq_generation(
+    r = cq.guide_cq_generation(
         _engine(), focus="无人机农场巡检领域：无人机、地块、巡检任务、图像识别能力")
     assert r["mode"] == "from_description"
     assert "无人机农场巡检" in r["prompt"]

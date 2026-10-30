@@ -24,6 +24,14 @@ htmlcov/
 # 本地服务状态（如有）
 .runtime/
 
+# ---------- 部署配置（模板 config/domain.example.json 入库，本地副本不入库） ----------
+# 精确路径：不可写成 domain*.json，否则模板会被一起忽略
+config/domain.json
+
+# ---------- 运行态领域包（由 ontologyctl domain install 重建，不入库） ----------
+# 示例随仓库分发在 examples/；domains/ 下只保留 README 与目录本身
+domains/*/
+
 # ---------- macOS ----------
 .DS_Store
 
