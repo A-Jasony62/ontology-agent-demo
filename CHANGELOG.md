@@ -7,6 +7,12 @@
 
 ### Added
 
+- 新增模块合并冲突预检 `merge_check`（通用 MCP 工具，`reasoner/merge_check.py`）：两个本体（团队词表 / 领域包）合并前的「冲突扫描仪」，**只体检、不合并**（处置决策是人的语义判断）
+  - 三类扫描：①同 URI 异定义（`subClassOf`/`domain`/`range` 签名差异，conflict 级——最危险的静默串数据）；②名称冲突（同 `rdfs:label` 或同短名但 IRI 不同——同名不同义，warning 级需人工确认）；③公理矛盾（incoming `X ⊑ B`、current `X ⊑ A` 且 `A disjointWith B`，含对称）
+  - 每条冲突附 current vs incoming 双侧事实对照 + 处置建议（`rename`/`align`/`skip`）——「两个团队当面对齐一次就够」的会议材料直接可打
+  - 与 owlrl 物化的分工（互补层）：物化只暴露逻辑不相容，暴露不了「同名不同义」（语义错位非逻辑矛盾）——三类扫描是物化覆盖不了的合并方向检查
+  - 边界：纯新增实体归 info 不算冲突；同绝对 IRI 不同前缀写法归一化为同一实体；零交集 `overlap=0` 零冲突诚实报告；RDF 语法错 fail-fast 返回 error（含解析位置）；只读扫描（不写图、不改任何状态）
+
 - **SHACL 业务规则执行 `reasoner/rules.py` + MCP `run_rules` / `list_rules` 工具**：业务规则用 SHACL 规则书写（W3C 标准规则语言，`rules/*.ttl` 随领域包分发、与 shapes/ 同栈），薄包装 pyshacl `shacl_rules()` 执行，不自造规则格式——SHACL 1.2 家族十月密集推进标准化（Inference Rules 工作草案 2026-10-28），自造格式等于逆着标准另起炉灶；规则与校验同语言、改文件即改业务口径无需发版。执行按文件独立跑 + 前后图差集**按文件归因**（文件间按名排序执行，如实文档化）；规则连锁迭代上限可配（默认 10，pyshacl 内置 100 轮硬编码且超限抛异常不可用，故本层自带轮次循环），触上限 `exceeded_iterations=true` 停止并说明（不静默截断）；`dry_run` 在图副本上预览产出、引擎原图不动；坏规则文件快速失败指明文件、其余文件照常执行。第一版仅支持 sh:SPARQLRule（三元组规则为后续工作）。示例规则两则（`examples/agent_task/rules/`）：R5 高风险复合任务无人可整体执行 → 需人工介入；R6 高风险单片任务 → 强制双人复核（两规则命中集不相交，演示按文件归因）。与 `validate_shapes` 分工：校验管「数据合不合格」，规则管「推出新结论」
 
 - 新增查询两段式超时（`reasoner/engine.py` + MCP / API 接线，~100 行内）：坏查询「限时一条明确报错、不挂死整机」——此前一条算不完的查询会拖住与 API / MCP / AI 助手同进程的整机
