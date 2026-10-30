@@ -1,7 +1,7 @@
 """SHACL 数据体检（domains/agent_task 的 validate_shapes / run_shacl_validation）测试。
 
 覆盖：
-  - 正例：默认 ABox + pipeline/shapes/agent_task.ttl → conforms=true
+  - 正例：默认 ABox + 领域包内 shapes/agent_task.ttl → conforms=true
   - 反例：删掉某 Agent 的 has_capability → conforms=false，violation 精确指焦点个体/路径/约束
   - 边界：多违规全部列出；shapes 语法损坏 → 诚实配置错误（不伪装 conforms=true）；测试构造不落盘
 """
@@ -12,10 +12,14 @@ import pyshacl
 from rdflib import Graph
 
 from reasoner.engine import ONTO_PATH, OntologyEngine
-from domains.agent_task import mcp as domain_mcp
+from domains import package_shapes_path
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHAPES = os.path.join(_ROOT, "pipeline", "shapes", "agent_task.ttl")
+from _helpers import domain_module, submodule  # noqa: E402
+
+domain_mcp = submodule(domain_module(), "mcp")
+
+# 形状文件随领域包走（P3-1）：按运行态配置定位，不再指向仓库根 pipeline/shapes/
+SHAPES = package_shapes_path(domain_module().NAME)
 
 
 def _engine():

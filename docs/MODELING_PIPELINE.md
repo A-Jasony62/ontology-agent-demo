@@ -387,7 +387,7 @@ def gate_materialization(owl_path: str, expect: dict) -> list[str]:
 ### 5.4 G4：SHACL 约束（数据形状）
 
 把"主键唯一、非空、取值范围"这类**不该用 OWL 表达**的约束写进 SHACL
-（`pipeline/shapes/<domain>.ttl`）：
+（`包内 shapes/<domain>.ttl`）：
 
 ```turtle
 @prefix sh: <http://www.w3.org/ns/shacl#> .
@@ -400,7 +400,7 @@ demo:TaskShape a sh:NodeShape ;
   sh:property [ sh:path demo:requires_capability ; sh:minCount 1 ] .
 ```
 
-校验：`pyshacl -s pipeline/shapes/agent_task.ttl domains/agent_task/agent_task_ontology.owl -f human`
+校验：`pyshacl -s domains/agent_task/shapes/agent_task.ttl domains/agent_task/agent_task_ontology.owl -f human`
 
 ### 5.5 验证报告（`s3_report.md`）
 
@@ -499,7 +499,7 @@ ontology-agent-demo/
 | 数据字典 | `data/dictionary.json` | 表/列/主外键/继承/种子个体（§3.1） |
 | LLM 输出 | `pipeline/out/axioms.json` | 候选公理（带 certainty/source/owl_snippet） |
 | 人工确认 | `pipeline/out/axioms.approved.json` | 同结构，status=approved/rejected |
-| SHACL 形状 | `pipeline/shapes/<domain>.ttl` | 唯一性/取值范围/基数 |
+| SHACL 形状 | `包内 shapes/<domain>.ttl` | 唯一性/取值范围/基数 |
 | 验证报告 | `pipeline/out/s3_report.md` | 四闸门结果 + 基线 |
 
 ---
@@ -519,7 +519,7 @@ pipeline-s2-apply:                                       ## 应用已确认公�
 	$(PIP)/s2_axioms.py --apply pipeline/out/axioms.approved.json --onto pipeline/out/skeleton.owl \
 		--out domains/agent_task/agent_task_ontology.owl
 pipeline-s3: pipeline-s2-apply                           ## S3 四道闸门
-	$(PIP)/s3_validate.py --owl domains/agent_task/agent_task_ontology.owl --shapes pipeline/shapes
+	$(PIP)/s3_validate.py --owl domains/agent_task/agent_task_ontology.owl --shapes domains/agent_task/shapes
 pipeline-s4: pipeline-s3                                 ## S4 领域包 + 物化快照
 	$(PIP)/s4_expose.py --domain agent_task --owl domains/agent_task/agent_task_ontology.owl \
 		--snapshot pipeline/out/materialized.ttl

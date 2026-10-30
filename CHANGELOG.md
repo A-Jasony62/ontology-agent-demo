@@ -19,6 +19,7 @@
 - **`examples/_minimal/`（P1-5）**：零复制验收物——1 个 owl + 4 行 config + 一个只继承不实现的适配器，证明新领域不必复制 `agent_task` 任何一行
 - **领域热切换（P2）：`domains/manager.py` + 三个端点**——`GET /api/domains`（已安装领域 + 当前）、`POST /api/domains/reload`（L2 同包重载：重读领域代码）、`POST /api/domains/{name}/activate`（L3 跨包切换）。切换一律**先构造后替换**：构造失败旧领域继续服务并返回 400，不会停在半个领域上；成功后同步 `reasoner.engine` 单例，避免"领域换了但通用查询还查旧图"
 - **`scripts/query.py --domain <name>`**：CLI 不再硬编码 `agent_task`，领域与本体路径由运行态配置解析（与 API / MCP 同一套判据）
+- **`ontologyctl domain list / uninstall / use`（P3-3）**：`list [--scan DIR]` 列出已安装领域并标注候选目录里哪些未装/已过期（内容哈希比对，只读）；`uninstall` 先整体移入 `backups/domains/` 再移除记录，默认拒绝卸载当前默认领域；`use` 把默认领域写进 `config/domain.json`（配置文件而非内存——API / MCP / CLI 三个进程都要读它）
 - **`domains` 加载器支持任意路径**：`spec_from_file_location` + `submodule_search_locations` 构造合法包，包内相对导入保持有效；同路径复用避免类身份分裂，`reload=True` 整包重建且失败回滚
 
 ### Changed
@@ -26,9 +27,10 @@
 - **示例领域迁至 `examples/agent_task/`，`domains/` 成为运行态 root 并入 `.gitignore`**（部署需先执行 `domain install`）
 - **默认领域不再写死**：`api/main.py` 与 `mcp/mcp_server.py` 均按配置解析默认领域（`--domain` / `--domains-root` 可覆盖），REST API 换领域无需改源码；`reasoner.engine.ONTO_PATH` 改为 import 时按配置解析（包内 `config.json` 的 `onto_file` → 包内唯一 `*.owl` → 历史路径兜底）
 - **`mcp/policy.py`、`mcp/tool_guard.py`、`reasoner/pipeline_gate.py` 的领域目录改为按配置解析**，不再硬编码仓库下的 `domains/`
-- **SHACL 形状文件定位**：`examples/agent_task/mcp.py` 由"上溯三级"改为 环境变量 `ONTOLOGY_SHAPES_FILE` → 包内 `SHAPES_FILE` 声明 → 包内 `shapes/*.ttl` → 历史布局，领域包安装到任意 root 后仍可用
-- 后端测试 178 → 236 → 290 → 308 项；`tests/conftest.py` 以进程内别名兼容旧导入，未安装时自动以临时副本运行（干净检出可直接跑，且不写脏 `examples/`）
+- **SHACL 形状文件定位**：`examples/agent_task/mcp.py` 改为 环境变量 `ONTOLOGY_SHAPES_FILE` → 包内 `SHAPES_FILE` 声明 → 包内 `shapes/*.ttl`（P3 起删除"上溯三级到仓库根"的兜底）
+- 后端测试 178 → 236 → 290 → 308 → 322 项；`tests/_helpers.py` 统一提供 `domain_module()` / `submodule()`，conftest 不再往 `sys.modules` 塞别名；`isolated_api` 夹具把会写盘的用例（reload / save-overwrite）挪到 tmp 副本，全量跑完运行态 `domains/<name>/` 的内容哈希与本体哈希均不变；未安装领域时（CI 干净检出）自动以临时副本运行，干净检出可直接跑且不写脏 `examples/`
 - **能力门禁与契约同源（P2-4）**：`/api/reason` 由 `if/elif` 枚举改为 `REASON_KINDS` 表驱动，支持清单 = 表键 ∩ 领域 `CAPABILITIES`；门禁判据改用 `undeclared_missing`——只声明部分能力的领域调未声明能力返 **400（未声明）** 而非 501（契约破损），501 只留给"声明了却没实现"
+- **形状文件随领域包走（P3-1/2）**：`pipeline/shapes/agent_task.ttl` → `examples/agent_task/shapes/agent_task.ttl`；`gates.json` 的 `shapes_file` 改为 `"@domain"` 哨兵，由 G4 按运行态配置从当前领域包解析（包内 `config.json` 的 `shapes_file` → 包内 `shapes/*.ttl`）。删掉 `mcp.py` 里"上溯三级到仓库根"的兜底——那个路径只在领域包恰好位于仓库里时成立，装到别处就静默变成"SHACL 跳过"
 - **`/api/health` 不再假设领域形状**：`agents` / `tasks` / `capabilities` 等统计在领域没有对应方法/配置时给 0，而不是 500。此前它写死了 `agent_task` 的字段，切到最小领域即崩
 - **领域包的导入面收敛**：只 import `reasoner.plugin`（门面）与 `reasoner.cq`，不再 import `reasoner.engine` / `reasoner.semantic` / `reasoner.derivation` / `reasoner.abox`；由 `tests/test_plugin.py` 的 ast 扫描断言守住
 - `agent_task` 适配器从 1391 行降到 591 行（ABox 205 行、CQ 502 行上移框架后）
@@ -94,7 +96,7 @@
   - **G1 DL 格式**：防 OWL-Full（owlready2 `is_owl_full()` + 结构断言；数据属性 inverse functional 主键陷阱拦截；缺依赖时诚实降级结构断言版）
   - **G2 一致性**：owlrl 物化 + `Nothing`/disjointWith 矛盾检查 + 空类信息性提示（HermiT 为可选增强，未启用时 `mode=degraded` 显式标注，不冒充完整 DL 闸）
   - **G3 物化冒烟**：领域 `gates_smoke.json` 断言集（预期谓词 min_count，如属性链产出 can_execute ≥1）；断言集为空如实 skipped
-  - **G4 SHACL**：复用 pyshacl + `pipeline/shapes/<domain>.ttl`，violations 短名化透传；行为基线（cq_regression）为挂钩位
+  - **G4 SHACL**：复用 pyshacl + `领域包内 shapes/<domain>.ttl`，violations 短名化透传；行为基线（cq_regression）为挂钩位
   - **fail-fast 过闸**：依次执行、遇 fail 即停（后续闸门标 `not_run`），`failed_at` 一眼定位卡闸位置；每闸输出 `{status, evidence, remediation}`（打回目标对齐上游文档矩阵：G1/G2 回 S2、G3 检查骨架、G4 修数据字典或 SHACL）；`gates` 参数支持单闸调试（如 `['G3']`），空列表全部 skipped（非假通过）；只读（拷贝图物化，不写回主图）
   - **映射修正声明**：G1-G4 语义以上游文档为权威（DL格式→一致性→物化冒烟→SHACL+测试）；术语/结构层面的校验对应 `validate_tbox_draft` 的 L1-L5，不是闸门本身
 
@@ -123,7 +125,7 @@
   - 语义白名单：只暴露允许的类/谓词（含子类继承），白名单外查询被拒并返回诚实提示；策略激活时 `query_sparql` 禁用
   - 预定义查询：`predefined_queries()` / `run_predefined_query(name, params)` 受控调用，渲染后复核谓词白名单
   - **默认关闭**：未配置策略时通用工具行为与旧版逐字节一致（向后兼容硬标准）
-- 新增 SHACL 数据体检工具 `validate_shapes`（agent_task 领域包）：按 `pipeline/shapes/agent_task.ttl` 对 ABox 做 SHACL 形状校验，返回结构化报告（conforms/summary/violations，violations 逐条给出焦点个体、属性路径、约束与中文说明）。落地上游 `docs/MODELING_PIPELINE.md` §5.4 G4 已约定但未实现的 SHACL 闸门（pipeline/ 目录此前为空）；新增 `pyshacl` 依赖
+- 新增 SHACL 数据体检工具 `validate_shapes`（agent_task 领域包）：按 `domains/agent_task/shapes/agent_task.ttl` 对 ABox 做 SHACL 形状校验，返回结构化报告（conforms/summary/violations，violations 逐条给出焦点个体、属性路径、约束与中文说明）。落地上游 `docs/MODELING_PIPELINE.md` §5.4 G4 已约定但未实现的 SHACL 闸门（pipeline/ 目录此前为空）；新增 `pyshacl` 依赖
 - 新增时序 ABox 支持（主体级 `validFrom`/`validTo`）：`engine.facts_at(property, at)` 按时间过滤活跃事实，MCP 通用工具 `active_facts`——半开区间（at==from 活跃、at==to 失效）、无时间戳事实永远活跃（零回归）、失效事实进 `inactive`（失效而非删除，原始三元组仍在图中）、非法时间戳进 `warnings`。参考 Graphiti「事实失效而非删除」机制
 
 ### Fixed

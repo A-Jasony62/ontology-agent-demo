@@ -1,10 +1,10 @@
-"""pytest 全局配置：把领域包按旧路径 `domains.<name>` 暴露给测试。
+"""pytest 全局配置：准备运行态、提供共享夹具。
 
 背景：P0 把示例领域从 `domains/` 移到 `examples/`，运行态由
-`ontologyctl domain install` 重建。测试里 8 个文件共 13 行
-`from domains.agent_task import ...`，要等 P2-4 才改成 fixture；
-在那之前用**进程内别名**保持零改动 —— 不落盘、不产生磁盘 shim、
-`domain list` 也看不见，pytest 进程结束即消失。
+`ontologyctl domain install` 重建。测试取领域模块统一走
+`tests/_helpers.py`（`domain_module` / `submodule`），不再往
+`sys.modules` 手工塞别名——模块名本来就由 `load_domain_module`
+注册为 `domains.<name>`，额外注入只会多一层看不见的状态（P3-4）。
 
 运行态准备（`_prepare_runtime`）：
   1. 已安装领域 → 直接用（本地按 README 走过 install 的常规情形）；
@@ -66,32 +66,25 @@ def _prepare_runtime() -> str:
 #   只依赖 stdlib + config（config 不 import reasoner），顺序安全。
 _PREPARED = _prepare_runtime()
 
-from domains import (                                 # noqa: E402
-    DomainNotFoundError,
-    load_domain_module,
-)
+import pytest                                          # noqa: E402
+from fastapi.testclient import TestClient              # noqa: E402
 
 
-def _alias_domain_for_tests() -> str:
-    cfg = load_config()
-    name = cfg.effective_default() or DEFAULT_EXAMPLE
-    try:
-        module = load_domain_module(name, settings=cfg)
-    except DomainNotFoundError:
-        module = load_domain_module(name, root=ROOT / "examples")
-    sys.modules[f"domains.{name}"] = module
-    return f"{name} ← {module.__file__}"
+def _load_default_domain() -> str:
+    """确保默认领域已加载（模块会被 registry 注册为 `domains.<name>`）。
+
+    不再手动 `sys.modules[...] = module`：`load_domain_module` 内部已经
+    做了这件事，重复注入会让"领域从哪来"这件事出现两个真相源。
+    """
+    from _helpers import domain_module
+
+    module = domain_module()
+    return f"{module.__name__} ← {module.__file__}"
 
 
 def pytest_configure(config):
     global _ALIAS_INFO
-    # 形状文件是仓库级资产（pipeline/shapes/），领域包被复制到临时 root 后
-    # “上溯三级”已不等于仓库根，显式指路最稳。
-    shapes = ROOT / "pipeline" / "shapes" / f"{DEFAULT_EXAMPLE}.ttl"
-    if shapes.is_file():
-        os.environ.setdefault("ONTOLOGY_SHAPES_FILE", str(shapes))
-
-    _ALIAS_INFO = f"{_PREPARED} | {_alias_domain_for_tests()}"
+    _ALIAS_INFO = f"{_PREPARED} | {_load_default_domain()}"
     # 引擎的引导路径在 import 时按配置解析；此处只做一致性校验提示
     import reasoner.engine as engine_mod
 
@@ -101,3 +94,85 @@ def pytest_configure(config):
 
 def pytest_report_header(config):
     return f"ontology domain: {_ALIAS_INFO}"
+
+
+# ---------------------------------------------------------------- 隔离夹具
+
+@pytest.fixture
+def restore_engine():
+    """`/api/ontology/load` 与 `save(overwrite)` 之后把运行态还原。
+
+    这两个端点必须真的改变运行态（否则测的就不是它们），代价是用完要还。
+    还原点是 `DOMAINS`（唯一真相源）而不是模块级 `ENGINE`：
+    P2 起"是否处于领域模式"由 `DOMAINS.in_domain_mode()` 判定，只重置
+    `reasoner.engine._engine` 是不够的——服务会一直停在通用模式，
+    后续所有领域端点用例集体 400（本地已踩过）。
+
+    只复位运行态，不碰磁盘：需要"真写盘"的用例（save overwrite）一律用
+    `isolated_api`，让写入落在 tmp 副本上。这里再备份/写回本体等于给
+    写盘测试留后门——写盘测试就该显式声明自己要写盘。
+    """
+    import api.main as M
+    import reasoner.engine as E
+
+    yield
+    E._engine = None
+    M.DOMAINS.reload_ontology()
+    M._sync_runtime(force=True)
+
+
+@pytest.fixture
+def isolated_api(tmp_path, monkeypatch):
+    """把当前运行态领域整体复制到 tmp，并让 API 指向副本。
+
+    为什么需要（P3-5）：`/api/ontology/reload` 与 `/api/ontology/save`
+    （overwrite）这类用例必须验证"真的写盘了"，但写到运行态 `domains/`
+    会留下副作用——尤其是 `extensions/` 里的坏 ttl，会让**后续所有**
+    reload 用例成片失败（本地已实际发生过一次）。副本让写盘照常发生，
+    只是落在 tmp 里，测试崩在中途也不会污染仓库。
+
+    返回 SimpleNamespace：module / client / root / package / extensions。
+    """
+    import shutil
+    from types import SimpleNamespace
+
+    from config import DomainConfig, load_config
+    from domains import DomainManager
+
+    import api.main as M
+
+    cfg = load_config()
+    name = cfg.effective_default() or DEFAULT_EXAMPLE
+    src = cfg.domain_dir(name)
+    root = tmp_path / "domains"
+    root.mkdir()
+    pkg = root / name
+    shutil.copytree(
+        src, pkg,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "extensions"),
+    )
+    extensions = pkg / "extensions"
+    extensions.mkdir()          # 显式空扩展目录：reload 用例往里丢文件
+
+    settings = DomainConfig(
+        root=root, default=name, watch_enabled=False,
+        watch_interval=0.0, sources={}, servers={},
+    )
+    manager = DomainManager(settings)
+    manager.activate(name)
+
+    previous = M.DOMAINS
+    monkeypatch.setattr(M, "DOMAINS", manager)
+    M._sync_runtime(force=True)
+    try:
+        yield SimpleNamespace(
+            module=M, client=TestClient(M.app), root=root, package=pkg,
+            extensions=extensions, manager=manager, name=name,
+        )
+    finally:
+        # 副本引擎已被 manager 写进 reasoner.engine 单例；清掉让后续测试重建
+        import reasoner.engine as engine_mod
+
+        monkeypatch.setattr(M, "DOMAINS", previous)
+        engine_mod._engine = None
+        M._sync_runtime(force=True)

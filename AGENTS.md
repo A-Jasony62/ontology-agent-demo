@@ -9,7 +9,7 @@ Chinese-language ontology × agent demo: a domain-agnostic OWL 2 RL engine (`rea
 - Neither `api/main.py` nor `mcp/mcp_server.py` names a domain any more: both resolve the default via config and load through `domains.registry`. `reasoner.engine.ONTO_PATH` is resolved at import time from the configured default domain (`default_onto_path()`: package `config.json` `onto_file` → unique `*.owl` → legacy path), so `reasoner` never imports a domain adapter (that would be circular).
 - Domain display names come from `rdfs:label` in the OWL file; do not duplicate them in `config.json`. Property names default to ontology short names (`config.json` only overrides them).
 - `frontend/app/` is the real UI. `frontend/app/dist/` is gitignored and built by `npm run build` or the Docker frontend stage; it is not committed.
-- `pipeline/gates.json` + `pipeline/shapes/<domain>.ttl` configure G1–G4 gates; `docs/MODELING_PIPELINE.md` is the authoritative gate spec, `reasoner/pipeline_gate.py` the implementation.
+- `pipeline/gates.json` + the domain package's own `shapes/<domain>.ttl` configure G1–G4 gates (`"shapes_file": "@domain"` makes G4 resolve the file from the active domain package, so it works under any runtime root); `docs/MODELING_PIPELINE.md` is the authoritative gate spec, `reasoner/pipeline_gate.py` the implementation.
 
 ## Commands
 
@@ -24,7 +24,7 @@ bash scripts/start.sh      # venv + deps + API + open browser
 - The Makefile hardcodes `.venv/bin/*`; run commands from the repo root. Backend tests need no running server or network.
 - Single backend test: `.venv/bin/python -m pytest tests/test_reasoning.py -k r1 -q`.
 - Frontend (from `frontend/app/`): `npm ci`, `npm run typecheck`, `npm run test`, `npm run build` (build includes typecheck). Single vitest file: `npx vitest run src/store/editorStore.test.ts`.
-- Current suites: 308 backend tests, 68 frontend tests. Counts in README/CONTRIBUTING are stale; trust `pytest`/`vitest` output.
+- Current suites: 322 backend tests, 68 frontend tests. Counts in README/CONTRIBUTING are stale; trust `pytest`/`vitest` output.
 - No backend linter/formatter/typechecker is configured; do not invent one. CI is pytest on Python 3.10–3.12 plus a Node 20 frontend job. The local `.venv` is Python 3.14; `make docs` cannot install mkdocs there (no watchdog wheel), so doc builds are verified in CI on 3.12.
 - `scripts/query.py` is HTTP-first with `--local` fallback; `scripts/query.py` and `scripts/ontologyctl.py` read `DOUBAO_API_BASE` (default `http://127.0.0.1:8000`).
 
@@ -41,7 +41,8 @@ bash scripts/start.sh      # venv + deps + API + open browser
 - Tests: `tests/conftest.py` aliases the domain package as `domains.<name>` in-process (no on-disk shim), so `from domains.agent_task import ...` still resolves. If the runtime root has no domain installed, it copies `examples/agent_task` to a temp root and points `ONTOLOGY_DOMAINS_ROOT` there — a clean checkout can run the suite, and writes land in the copy. When a domain *is* installed, the suite still writes into the real runtime root (`test_reload.py` adds `.ttl` into `<root>/agent_task/extensions/`, `test_edit_model.py` overwrites and restores the core `.owl`), so do not run it in parallel with a server using `--watch`/`--reload`.
 - Persistence is no longer git-tracked by default: `persist=true` writes go to `<runtime root>/agent_task/extensions/*.ttl`, and `domains/*/` is gitignored. Anything that must be versioned belongs in `examples/` (or a dedicated tracked location) — `scripts/ontologyctl.py` paths that `git add domains/...` need review before use.
 - `scripts/build_ontology.py` regenerates the core `agent_task_ontology.owl` from Python definitions. It does not merge API/Protégé edits back, so rerunning it discards those edits; `--clean` only leaves `extensions/` untouched.
-- `data/uploads/` (saved ontologies) and `backups/` are gitignored. Keep new tests isolated with `tmp_path` like the existing ones.
+- `data/uploads/` (saved ontologies) and `backups/` are gitignored. Keep new tests isolated with `tmp_path` like the existing ones. Two shared fixtures carry the weight: `isolated_api` (copies the active domain package to `tmp_path`; use it for anything that really writes — `/api/ontology/reload`, `save(mode=overwrite)`) and `restore_engine` (state-only reset after `/api/ontology/load` or `save(mode=new)`). Tests must not write into the runtime `domains/<name>/` — verified by hashing the package before/after a full run.
+- Tests obtain the domain module via `tests/_helpers.py` (`domain_module()` / `submodule(mod, "cq")`), not by injecting `sys.modules` aliases: the module name is already registered by `load_domain_module`, and a second source of truth only hides where a domain comes from. Never hardcode the domain name in a test; take it from config or `module.NAME`.
 
 ## Conventions
 

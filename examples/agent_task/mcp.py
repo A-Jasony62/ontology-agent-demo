@@ -23,21 +23,23 @@ except ImportError:  # 依赖未装时工具返回诚实提示，不崩 server
 
 SH = Namespace("http://www.w3.org/ns/shacl#")
 
-# 领域包可声明形状文件（相对包目录或绝对路径）；None 表示按下列顺序自动解析
-SHAPES_FILE: str | None = None
+# 形状文件随领域包走（相对包目录或绝对路径）。显式声明优先于"包里 shapes/ 唯一 ttl"
+# 的约定——领域包同时带核心形状与扩展形状时，约定会猜错。
+SHAPES_FILE: str | None = os.path.join("shapes", "agent_task.ttl")
 
 
-def _resolve_shapes_path() -> str:
-    """SHACL 形状文件位置。
+def _resolve_shapes_path() -> str | None:
+    """SHACL 形状文件位置；找不到返回 None（调用方如实报"未配置"，不猜）。
 
     解析顺序（越靠前越优先）：
       1. 环境变量 ONTOLOGY_SHAPES_FILE（部署 / 测试显式指定）
-      2. 包内声明 SHAPES_FILE（新领域推荐，随领域包走）
+      2. 包内声明 SHAPES_FILE（推荐，随领域包走）
       3. 包内 shapes/*.ttl（单文件约定）
-      4. 历史布局：仓库根 pipeline/shapes/agent_task.ttl（上溯三级）
 
-    只保留第 4 条会在领域包被安装到任意 root 后失效
-    （上溯三级不再等于仓库根），所以前置了显式声明与包内约定。
+    此前还有第 4 条"上溯三级到仓库根 pipeline/shapes/"。它只在领域包恰好
+    位于仓库 examples/ 下时成立，装到任意 root 后就指到一个不存在的路径，
+    然后被静默当成"SHACL 跳过"——比报错更难查。P3 起删除：形状文件必须
+    随领域包走。
     """
     env = os.environ.get("ONTOLOGY_SHAPES_FILE")
     if env:
@@ -45,17 +47,15 @@ def _resolve_shapes_path() -> str:
 
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     if SHAPES_FILE:
-        return SHAPES_FILE if os.path.isabs(SHAPES_FILE) else os.path.join(pkg_dir, SHAPES_FILE)
+        path = SHAPES_FILE if os.path.isabs(SHAPES_FILE) else os.path.join(pkg_dir, SHAPES_FILE)
+        return path if os.path.isfile(path) else None
 
     local_shapes = os.path.join(pkg_dir, "shapes")
     if os.path.isdir(local_shapes):
         candidates = sorted(f for f in os.listdir(local_shapes) if f.endswith(".ttl"))
         if len(candidates) == 1:
             return os.path.join(local_shapes, candidates[0])
-
-    return os.path.join(
-        os.path.dirname(os.path.dirname(pkg_dir)), "pipeline", "shapes", "agent_task.ttl"
-    )
+    return None
 
 
 _SHAPES_PATH = _resolve_shapes_path()
@@ -111,16 +111,21 @@ def _shacl_violations(results_graph, engine) -> list:
 
 
 def run_shacl_validation(engine) -> dict:
-    """按 pipeline/shapes/agent_task.ttl 对引擎 ABox 做 SHACL 校验（结构化报告，不抛异常）。"""
+    """按领域包内 shapes/agent_task.ttl 对引擎 ABox 做 SHACL 校验（结构化报告，不抛异常）。"""
     if pyshacl is None:
         return {"conforms": None, "configured": False,
                 "error": "缺少依赖 pyshacl，请先 pip install pyshacl（见 requirements.txt）"}
+    path = _SHAPES_PATH or _resolve_shapes_path()
+    if not path:
+        return {"conforms": None, "configured": False,
+                "error": ("领域包内未提供 SHACL 形状文件：请在 shapes/ 下放唯一 ttl，"
+                          "或声明 SHAPES_FILE / 设置 ONTOLOGY_SHAPES_FILE")}
     try:
         shapes = Graph()
-        shapes.parse(_SHAPES_PATH, format="turtle")
+        shapes.parse(path, format="turtle")
     except Exception as exc:
         return {"conforms": None, "configured": False,
-                "error": f"SHACL 形状文件加载失败：{exc}", "shapes_path": _SHAPES_PATH}
+                "error": f"SHACL 形状文件加载失败：{exc}", "shapes_path": path}
     try:
         conforms, results_graph, _text = pyshacl.validate(
             engine.raw, shacl_graph=shapes, abort_on_first=False)
@@ -220,7 +225,7 @@ def register_tools(server: MCPServer, get_adapter) -> None:
         return cq.validate_tbox_draft(ttl, cqs)
 
     @server.tool(description=(
-        "数据体检（SHACL，领域）：按 pipeline/shapes/agent_task.ttl 对当前 ABox 实例数据做"
+        "数据体检（SHACL，领域）：按领域包内 shapes/agent_task.ttl 对当前 ABox 实例数据做"
         "SHACL 形状校验，返回结构化报告 {conforms, summary, violations}——violations 逐条给出"
         "焦点个体短名、属性路径、违反的约束与中文说明；不合格的列出来而非抛异常。"
         "用于「LLM 抽取/生成 → SHACL 体检 → 合格才入库」的 AI 数据治理闭环。"))

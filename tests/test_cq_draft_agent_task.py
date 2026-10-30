@@ -7,7 +7,10 @@
 """
 
 from reasoner.engine import ONTO_PATH, OntologyEngine
-from domains.agent_task import cq
+
+from _helpers import domain_module, submodule  # noqa: E402
+
+cq = submodule(domain_module(), "cq")
 
 # 合格草稿：类层次 + 属性链 + 传递 + 一致性良好
 GOOD_TTL = """@prefix owl: <http://www.w3.org/2002/07/owl#>.

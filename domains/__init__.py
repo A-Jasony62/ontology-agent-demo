@@ -8,6 +8,7 @@
     load_domain_module  返回模块本身（conftest 别名 / 需要包内子模块时）
     default_onto_path   默认领域的核心本体路径（供 reasoner 引导解析）
     package_onto_path   指定领域包的核心本体路径
+    package_shapes_path 指定领域包的 SHACL 形状文件
     get_config          当前运行态配置（root / default / watch）
     refresh_config      重新读取配置
     DomainNotFoundError / DomainContractError  加载失败的明确分类
@@ -31,6 +32,7 @@ from .registry import (
     load_domain,
     load_domain_module,
     package_onto_path,
+    package_shapes_path,
     refresh_config,
 )
 
@@ -45,5 +47,6 @@ __all__ = [
     "load_domain",
     "load_domain_module",
     "package_onto_path",
+    "package_shapes_path",
     "refresh_config",
 ]

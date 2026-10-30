@@ -59,6 +59,7 @@ __all__ = [
     "load_domain",
     "load_domain_module",
     "package_onto_path",
+    "package_shapes_path",
     "refresh_config",
 ]
 
@@ -283,8 +284,12 @@ def list_domains(*, settings: DomainConfig | None = None) -> list[dict]:
 # ---------------------------------------------------------------- 引导路径
 
 
-def _declared_onto(ddir: Path) -> str | None:
-    """读领域包 config.json 的 onto_file（显式声明优先于约定）。"""
+def _declared_file(ddir: Path, key: str) -> str | None:
+    """读领域包 config.json 里声明的包内路径（显式声明优先于约定）。
+
+    `key` 为 `onto_file` / `shapes_file` 等；解析结果必须落在包内，
+    否则视为无效声明——领域包不该通过配置指到包外的文件。
+    """
     cfg_json = ddir / "config.json"
     if not cfg_json.is_file():
         return None
@@ -292,16 +297,21 @@ def _declared_onto(ddir: Path) -> str | None:
         data = json.loads(cfg_json.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    onto = data.get("onto_file") if isinstance(data, dict) else None
-    if not isinstance(onto, str) or not onto.strip():
+    value = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(value, str) or not value.strip():
         return None
     base = ddir.resolve()
-    target = (base / onto.strip()).resolve()
+    target = (base / value.strip()).resolve()
     try:
-        target.relative_to(base)          # 拒绝 onto_file 把解析指到包外
+        target.relative_to(base)          # 拒绝把解析指到包外
     except ValueError:
         return None
     return str(target) if target.is_file() else None
+
+
+def _declared_onto(ddir: Path) -> str | None:
+    """读领域包 config.json 的 onto_file（显式声明优先于约定）。"""
+    return _declared_file(ddir, "onto_file")
 
 
 def package_onto_path(
@@ -328,6 +338,33 @@ def package_onto_path(
         p for p in ddir.glob("*.owl") if not p.name.startswith(".")
     )
     return str(owls[0].resolve()) if len(owls) == 1 else None
+
+
+def package_shapes_path(
+    name: str,
+    *,
+    settings: DomainConfig | None = None,
+    root: str | Path | None = None,
+) -> str | None:
+    """领域包的 SHACL 形状文件（**不执行领域代码**）。
+
+    解析顺序与本体一致：config.json 的 `shapes_file` → 包内 `shapes/*.ttl`（唯一）。
+    形状文件随领域包走，G4 闸门与 `validate_shapes` 工具才能在任何 root 下
+    找到它——此前固定 `pipeline/shapes/<domain>.ttl` 的做法要求"领域包正好
+    位于仓库里"，安装到别处就静默 skipped。
+    """
+    ddir = _package_dir(name, settings, root)
+    if not ddir.is_dir():
+        return None
+    declared = _declared_file(ddir, "shapes_file")
+    if declared:
+        return declared
+    shapes = ddir / "shapes"
+    if shapes.is_dir():
+        ttl = sorted(p for p in shapes.glob("*.ttl") if not p.name.startswith("."))
+        if len(ttl) == 1:
+            return str(ttl[0].resolve())
+    return None
 
 
 def default_onto_path() -> str | None:

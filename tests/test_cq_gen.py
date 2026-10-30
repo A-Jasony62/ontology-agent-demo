@@ -9,7 +9,10 @@
 import json
 
 from reasoner.engine import ONTO_PATH, OntologyEngine
-from domains.agent_task import cq
+
+from _helpers import domain_module, submodule  # noqa: E402
+
+cq = submodule(domain_module(), "cq")
 
 # 20 道模拟 CQ：四类各 5 道，全部带 schema 英文术语锚点，expected 为人工标注
 MOCK_CQS: list[tuple[str, str]] = [

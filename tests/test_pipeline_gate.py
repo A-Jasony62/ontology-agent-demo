@@ -8,6 +8,8 @@
     单闸调试 gates=["G3"]；G2 降级 owlrl 显式标注
 """
 
+import os
+
 from reasoner.engine import ONTO_PATH, OntologyEngine
 from reasoner import pipeline_gate
 
@@ -146,3 +148,36 @@ def test_single_gate_debug_mode():
         "G2_consistency": "skipped",
         "G4_shacl_tests": "skipped",
     }
+
+
+# ---------------- P3-1/2：形状文件随领域包走 ----------------
+
+def test_gates_config_uses_domain_sentinel():
+    """gates.json 不再写死仓库内路径，而是让 G4 按领域解析。"""
+    assert pipeline_gate._load_gates()["G4_shacl_tests"]["shapes_file"] == "@domain"
+
+
+def test_shapes_resolved_from_domain_package():
+    """@domain 哨兵 → 解析到领域包内的形状文件（安装到任意 root 都成立）。"""
+    from domains import package_shapes_path
+
+    expected = package_shapes_path("agent_task")
+    assert expected and os.path.isfile(expected)
+    # 只断言"在领域包的 shapes/ 下"：包在哪由运行态配置决定（仓库 examples/、
+    # 运行态 domains/、CI 的临时 root 都合法）
+    assert expected.replace("\\", "/").endswith("agent_task/shapes/agent_task.ttl")
+    assert pipeline_gate._resolve_shapes("@domain", "agent_task") == expected
+
+
+def test_shapes_relative_path_still_supported():
+    """兼容旧配置：相对路径按仓库根解析（但已不是默认）。"""
+    resolved = pipeline_gate._resolve_shapes("pipeline/gates.json", "agent_task")
+    assert resolved == os.path.join(pipeline_gate._REPO_ROOT, "pipeline/gates.json")
+
+
+def test_g4_skips_honestly_when_domain_has_no_shapes():
+    """领域没提供形状文件 → G4 如实 skipped，而不是去仓库里捡一个别人的。"""
+    r = pipeline_gate.run_gates(_current_ttl(), gates=["G4"], domain="")
+    g4 = next(t for t in r["gate_trace"] if t["gate"] == "G4_shacl_tests")
+    assert g4["status"] == "skipped"
+    assert "如实跳过" in g4["evidence"]["reason"]

@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from reasoner.engine import OntologyEngine, ONTO_PATH, DEFAULT_NS, resolve_ns, local  # noqa: E402
 
+from _helpers import domain_module, submodule  # noqa: E402
 
 # 带显式 xml:base 的迷你本体（复刻真实领域包的写法：
 # xml:base 与实体相对引用 '#Term'，owl:Ontology rdf:about 同 base）
@@ -175,7 +176,8 @@ def test_domain_adapter_ns_binding_still_works(tmp_path):
     与自动推导互不冲突：自动推导先行给出正确 NS，适配器不再需要改绑。"""
     path = _write(tmp_path, MINI_OWL_WITH_BASE, "mini_domain.owl")
     engine = OntologyEngine(path)
-    from domains.agent_task import create_adapter, DEFAULT_CONFIG
+    _d = domain_module()
+    create_adapter, DEFAULT_CONFIG = _d.create_adapter, _d.DEFAULT_CONFIG
     # 传入非本领域的引擎：适配器不得改绑其 NS（上游既定行为）
     adapter = create_adapter(engine, DEFAULT_CONFIG)
     assert str(engine.NS) == "http://demo.example.org/mini-domain#"
@@ -236,7 +238,9 @@ def test_adapter_real_query_with_auto_ns(tmp_path):
     engine = OntologyEngine(path)
     assert str(engine.NS) == "http://demo.example.org/auto-agent#"
 
-    from domains.agent_task import create_adapter, DEFAULT_CONFIG
+    _d = domain_module()
+
+    create_adapter, DEFAULT_CONFIG = _d.create_adapter, _d.DEFAULT_CONFIG
     adapter = create_adapter(engine, DEFAULT_CONFIG)
 
     # 真实查询 1：capability_match（依赖属性链推理，NS 绑定错误会全空/报错）

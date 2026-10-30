@@ -172,17 +172,187 @@ def cmd_log(args) -> dict:
     }
 
 
+def _config_dir():
+    """部署配置文件所在目录（domain.json 写在这里）。独立函数便于测试替换。"""
+    from pathlib import Path
+
+    return Path(PROJECT_ROOT) / "config"
+
+
+def _load_cfg(args):
+    """按 CLI 参数加载运行态配置，且**固定使用本项目的 config 目录**。
+
+    不加 config_dir 的话 `load_config` 会按自身模块位置推导配置目录，
+    `domain use` 写下的默认领域与 `domain uninstall / list` 读到的就不是
+    同一份文件——两个命令对"当前默认是谁"给出不同答案。
+    """
+    from config import load_config
+
+    return load_config(cli_root=getattr(args, "to", None), config_dir=_config_dir())
+
+
+def _installed_meta(root, name: str) -> dict:
+    """读安装记录 root/.installed/<name>.json（缺失/损坏 → 空 dict）。"""
+    from pathlib import Path
+
+    path = Path(root) / ".installed" / f"{name}.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 —— 记录损坏不该让 list 失败
+        return {}
+
+
+def _scan_dir(scan_root, installed_root) -> list:
+    """扫描一个目录下的候选领域包，标注是否已安装、是否与已安装版本一致。
+
+    只读：不安装、不修改任何东西。`up_to_date` 用内容哈希判断，
+    因为"装过"不等于"装的是这份"——重新装一次是最常见的需求。
+    """
+    from pathlib import Path
+
+    from domains.installer import tree_hash
+
+    out = []
+    base = Path(scan_root).expanduser()
+    if not base.is_dir():
+        return [{"error": f"目录不存在：{base}"}]
+    for pkg in sorted(base.iterdir()):
+        if not pkg.is_dir() or not (pkg / "__init__.py").is_file():
+            continue
+        target = Path(installed_root) / pkg.name
+        installed = target.is_dir()
+        same = False
+        if installed:
+            try:
+                same = tree_hash(pkg) == tree_hash(target)
+            except OSError:
+                same = False
+        out.append({
+            "name": pkg.name,
+            "path": str(pkg),
+            "installed": installed,
+            "up_to_date": same,
+        })
+    return out
+
+
+def _domain_list(args) -> dict:
+    from domains import package_onto_path, package_shapes_path
+
+    cfg = _load_cfg(args)
+    current = cfg.effective_default()
+    items = []
+    for name in cfg.installed():
+        meta = _installed_meta(cfg.root, name)
+        items.append({
+            "name": name,
+            "is_default": name == current,
+            "source": meta.get("source"),
+            "installed_at": meta.get("installed_at"),
+            "onto_file": package_onto_path(name, settings=cfg),
+            "shapes_file": package_shapes_path(name, settings=cfg),
+        })
+    result = {"ok": True, "root": str(cfg.root), "default": current, "domains": items}
+    if getattr(args, "scan", None):
+        result["scan"] = {
+            "dir": args.scan,
+            "candidates": _scan_dir(args.scan, cfg.root),
+        }
+    return result
+
+
+def _domain_uninstall(args) -> dict:
+    """卸载：先整体移到 backups/ 再删记录——装错了还能拿回来。"""
+    import shutil
+    from pathlib import Path
+
+    cfg = _load_cfg(args)
+    name = args.name
+    pkg = Path(cfg.root) / name
+    if not pkg.is_dir():
+        return {"ok": False, "error": f"未安装：{name}；已安装：{cfg.installed() or '（空）'}"}
+    if cfg.effective_default() == name and not args.force:
+        return {
+            "ok": False,
+            "error": (f"{name} 是当前默认领域，直接卸载会让服务起不来。"
+                      "请先 `domain use <其他领域>`，或加 --force 确认。"),
+        }
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = Path(PROJECT_ROOT) / "backups" / "domains" / f"{name}-{stamp}"
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(pkg), str(backup))
+    meta = Path(cfg.root) / ".installed" / f"{name}.json"
+    if meta.is_file():
+        meta.unlink()
+    return {
+        "ok": True,
+        "uninstalled": name,
+        "backup": str(backup),
+        "default": cfg.effective_default(),
+        "installed_domains": cfg.installed(),
+    }
+
+
+def _domain_use(args) -> dict:
+    """把默认领域写进 config/domain.json（本地部署配置，已 gitignore）。
+
+    为什么不直接改内存：默认领域是**部署决策**，要跨进程生效——
+    API 重启、MCP 重启、CLI 内嵌引擎都读同一份配置。写配置文件是唯一
+    能让这三者同时改主意的地方。
+    """
+    from pathlib import Path
+
+    cfg = _load_cfg(args)
+    name = args.name
+    if name not in cfg.installed():
+        return {"ok": False,
+                "error": f"未安装：{name}；已安装：{cfg.installed() or '（空）'}"}
+
+    cfg_dir = Path(_config_dir())
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    path = cfg_dir / "domain.json"
+    data: dict = {}
+    # 以模板为基线：只写 {"domains":{"default":...}} 会把 root/watch 等字段
+    # 连带覆盖成缺省值，等于顺手改了别的配置。
+    template = cfg_dir / "domain.example.json"
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            return {"ok": False, "error": f"现有 domain.json 不是合法 JSON：{exc}"}
+    elif template.is_file():
+        data = json.loads(template.read_text(encoding="utf-8"))
+        data.pop("_readme", None)
+    domains = data.setdefault("domains", {})
+    domains.setdefault("root", "domains")      # 与内置默认一致；模板缺失时也保持完整
+    domains["default"] = name
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "ok": True,
+        "default": name,
+        "config": str(path),
+        "note": ("API 可立即切换：POST /api/domains/{name}/activate；"
+                 "MCP 的领域在启动时注册工具，需重启进程才会生效"),
+    }
+
+
 def cmd_domain(args) -> dict:
-    """领域包管理：install --from <path> [--name N] [--to ROOT] [--force]。"""
-    from config import ConfigError, load_config
+    """领域包管理：install / list / uninstall / use。"""
+    from config import ConfigError
     from domains.installer import install
 
     action = getattr(args, "domain_action", None)
-    if action != "install":
-        return {"ok": False, "error": f"不支持的 domain 操作：{action}"}
-
     try:
-        cfg = load_config(cli_root=getattr(args, "to", None))
+        if action == "list":
+            return _domain_list(args)
+        if action == "uninstall":
+            return _domain_uninstall(args)
+        if action == "use":
+            return _domain_use(args)
+        if action != "install":
+            return {"ok": False, "error": f"不支持的 domain 操作：{action}"}
+        cfg = _load_cfg(args)
         result = install(args.src, root=cfg.root, name=args.name, force=args.force)
     except ConfigError as exc:
         return {"ok": False, "error": str(exc)}
@@ -199,7 +369,7 @@ SUBCOMMANDS = {
     "diff": (cmd_diff, "未提交变更预览（服务 changelog + git status）"),
     "rollback": (cmd_rollback, "git checkout 本体文件并 reload（可指定 tag）"),
     "log": (cmd_log, "git log（本体相关）+ 服务 changelog + tags"),
-    "domain": (cmd_domain, "领域包管理：install --from <path>（源目录必填）"),
+    "domain": (cmd_domain, "领域包管理：install --from <path> / list [--scan DIR] / uninstall N / use N"),
 }
 
 
@@ -215,6 +385,21 @@ def _add_domain_actions(parser, common) -> None:
     inst.add_argument("--name", default=None, help="安装名（缺省取源目录名）")
     inst.add_argument("--to", default=None, help="目标 root（缺省取配置 domains.root）")
     inst.add_argument("--force", action="store_true", help="覆盖已安装版本（先备份）")
+
+    lst = dsub.add_parser("list", help="列出已安装领域（可扫描候选目录）", parents=[common])
+    lst.add_argument("--to", default=None, help="目标 root（缺省取配置 domains.root）")
+    lst.add_argument("--scan", default=None,
+                     help="扫描该目录下的候选领域包，标注是否已安装 / 是否最新（只读）")
+
+    rm = dsub.add_parser("uninstall", help="卸载领域包（先整体备份）", parents=[common])
+    rm.add_argument("name", help="领域标识")
+    rm.add_argument("--to", default=None, help="目标 root（缺省取配置 domains.root）")
+    rm.add_argument("--force", action="store_true",
+                    help="允许卸载当前默认领域（默认拒绝，避免服务起不来）")
+
+    use = dsub.add_parser("use", help="把某领域写为配置默认领域", parents=[common])
+    use.add_argument("name", help="领域标识")
+    use.add_argument("--to", default=None, help="目标 root（缺省取配置 domains.root）")
 
 
 def main() -> int:

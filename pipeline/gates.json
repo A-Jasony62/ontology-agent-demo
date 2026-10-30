@@ -5,6 +5,6 @@
   "G3_materialize_smoke": {"enabled": true},
   "G4_shacl_tests": {
     "enabled": true,
-    "shapes_file": "pipeline/shapes/agent_task.ttl"
+    "shapes_file": "@domain"
   }
 }
