@@ -58,7 +58,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from reasoner.engine import OntologyEngine
+from reasoner.engine import OntologyEngine, SparqlTimeoutError
 from reasoner.pipeline_gate import run_gates
 from reasoner.proof import build_proof
 from config import load_config
@@ -129,11 +129,31 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=No
             **extra,
         }
 
-    @tool(description="SPARQL 查询（通用）：执行 SPARQL SELECT 并返回结果行，IRI 值自动转为短名。适用于任何本体，不依赖领域语义。")
+    def _timeout_error(exc: SparqlTimeoutError) -> dict:
+        """超时的结构化错误（两段式：kind=first/total + 时限 + 建议；不挂住不裸抛）。"""
+        return {
+            "error": "query_timeout",
+            "kind": exc.kind,
+            "limit_ms": exc.limit_ms,
+            "message": str(exc),
+            "hint": ("查询被时限拦下一次（单次超时仅放弃该查询，后续查询不受影响）；"
+                     "请缩小查询范围或加 LIMIT，或调整环境变量 "
+                     "ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS / ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS"),
+        }
+
+    @tool(description=(
+        "SPARQL 查询（通用）：执行 SPARQL SELECT 并返回结果行，IRI 值自动转为短名。适用于任何本体，"
+        "不依赖领域语义。支持面见 README「SPARQL 支持边界」。两段式超时（可选，环境变量 "
+        "ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS / ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS，未设=不启用，"
+        "对齐 Jena ARQ 两段式形态）：超时返回结构化错误 {error: query_timeout, kind: first|total, "
+        "limit_ms, hint} 而非挂住。"))
     def query_sparql(sparql: str) -> dict:
         if active:
             return _deny("已开启语义白名单，请改用 run_predefined_query", available_queries=policy.query_names())
-        return {"results": get_engine().query_sparql(sparql)}
+        try:
+            return {"results": get_engine().query_sparql(sparql)}
+        except SparqlTimeoutError as exc:
+            return _timeout_error(exc)
 
     @tool(description="个体查询（通用）：返回指定类（短名，含其子类）的全部个体短名。如 individuals('Agent')。")
     def individuals(class_name: str) -> dict:
@@ -195,7 +215,10 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=No
         rendered = policy.render_predefined(name, params, short_to_iri)
         if not rendered["ok"]:
             return {"denied": True, "reason": rendered["error"]}
-        return {"query": rendered["name"], "results": eng.query_sparql(rendered["sparql"])}
+        try:
+            return {"query": rendered["name"], "results": eng.query_sparql(rendered["sparql"])}
+        except SparqlTimeoutError as exc:
+            return _timeout_error(exc)
 
     @tool(description=(
         "时序事实查询（通用）：返回指定属性在时刻 at（缺省=今天）的活跃事实。按主体级 "

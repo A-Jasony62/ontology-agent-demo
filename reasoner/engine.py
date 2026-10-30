@@ -18,6 +18,8 @@
 """
 
 import os
+import threading
+import time
 from datetime import date
 
 from rdflib import Graph, Namespace, URIRef, Literal, BNode, RDF, RDFS, OWL
@@ -95,6 +97,83 @@ def _resolve_ns(onto_path: str, g: "Graph", use_xml_base: bool = True) -> str:
 # 增值是 `default_ns=DEFAULT_NS` 这个兜底，而校验一份草稿时不该认领任何应用的
 # 命名空间，所以那边刻意传空串而不是复用它。
 resolve_ns = _resolve_ns
+
+
+class SparqlTimeoutError(RuntimeError):
+    """SPARQL 查询超时（两段式：首条结果 / 整体完成）。属性 kind / limit_ms。
+
+    两段语义（对齐 Jena ARQ 的 queryTimeout 两段式形态，如 "500,10000"：
+    首条结果 500ms 内必出、整体 10s 封顶）：
+      kind="first" —— 首条结果就绪时限超时（查询可能卡在求值阶段）
+      kind="total" —— 整体完成时限超时（能出但太慢）
+    局限（如实声明）：Python 线程不可强杀，超时后后台线程会跑完自然结束
+    （单机规模无害）；彻底隔离的子进程方案为后续独立改造。
+    """
+
+    def __init__(self, kind: str, limit_ms: int, message: str | None = None):
+        self.kind = kind
+        self.limit_ms = limit_ms
+        super().__init__(
+            message
+            or (f"查询超时（{'首条结果' if kind == 'first' else '整体完成'}时限 {limit_ms}ms）——"
+                f"请缩小查询范围或加 LIMIT，或调整环境变量 "
+                f"ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS / ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS"))
+
+
+def _env_timeout_ms(name: str):
+    """环境变量读超时毫秒数；未设/非正数 → None（不启用，逐字节兼容原行为）。"""
+    raw = os.environ.get(name)
+    if not raw:
+        return None
+    try:
+        v = int(raw)
+    except ValueError:
+        return None
+    return v if v > 0 else None
+
+
+def _consume_query(g, sparql: str) -> list[dict]:
+    """消费一次查询的全部结果行（IRI 值转短名；与原 query_sparql 体一致）。"""
+    rows = []
+    for row in g.query(sparql):
+        d = {}
+        for var in row.asdict():
+            v = row[var]
+            d[var] = local(v) if isinstance(v, URIRef) else str(v)
+        rows.append(d)
+    return rows
+
+
+def _run_query_timed(g, sparql: str, first_ms, total_ms) -> list[dict]:
+    """带时限执行：后台线程跑查询，主线程按两段时限放弃（结果不回灌）。
+
+    demo 的查询为一次性物化整页结果（非流式）：first_ms 作用于「首批结果
+    就绪」（区分卡死与慢），total_ms 封顶整体完成时间。超时后放弃该次结果
+    并抛 SparqlTimeoutError（后续查询与服务不受影响：单次超时仅放弃该查询）。"""
+    holder: dict = {}
+    done = threading.Event()
+
+    def _worker():
+        try:
+            holder["rows"] = _consume_query(g, sparql)
+        except BaseException as exc:  # 后台异常回传主线程原样抛出
+            holder["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    start = time.monotonic()
+    if first_ms is not None and not done.wait(first_ms / 1000):
+        raise SparqlTimeoutError("first", first_ms)
+    if total_ms is not None:
+        remaining = total_ms / 1000 - (time.monotonic() - start)
+        if not done.wait(max(remaining, 0.0)):
+            raise SparqlTimeoutError("total", total_ms)
+    if "error" in holder:
+        raise holder["error"]
+    if "rows" not in holder:  # 防御：两段均未超时却无结果（理论不可达）
+        raise RuntimeError("查询线程异常结束且未返回结果")
+    return holder["rows"]
 
 
 class OntologyEngine:
@@ -332,16 +411,23 @@ class OntologyEngine:
 
     # ---------------- 通用查询接口（对外，与本体定义无关） ----------------
 
-    def query_sparql(self, sparql: str) -> list[dict]:
-        """执行 SPARQL SELECT，返回 [{变量: 值}, ...]（IRI 值转短名）。"""
-        rows = []
-        for row in self.g.query(sparql):
-            d = {}
-            for var in row.asdict():
-                v = row[var]
-                d[var] = local(v) if isinstance(v, URIRef) else str(v)
-            rows.append(d)
-        return rows
+    def query_sparql(self, sparql: str, first_ms: int | None = None,
+                      total_ms: int | None = None) -> list[dict]:
+        """执行 SPARQL SELECT，返回 [{变量: 值}, ...]（IRI 值转短名）。
+
+        两段式超时（可选）：first_ms（首条结果时限）/ total_ms（整体时限），
+        未传时读环境变量 ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS /
+        ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS（未设/非正数 = 不启用）。
+        两段均未启用时直通原执行路径（零线程开销、逐字节兼容）。
+        超时抛 SparqlTimeoutError（kind/limit_ms），单次超时仅放弃该查询。
+        """
+        first = first_ms if first_ms is not None else _env_timeout_ms(
+            "ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS")
+        total = total_ms if total_ms is not None else _env_timeout_ms(
+            "ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS")
+        if first is None and total is None:
+            return _consume_query(self.g, sparql)
+        return _run_query_timed(self.g, sparql, first, total)
 
     def individuals(self, class_name: str) -> list[str]:
         """指定类（短名）及其子类的全部个体短名。"""
