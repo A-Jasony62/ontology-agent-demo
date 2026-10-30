@@ -1,0 +1,28 @@
+{
+  "rules": [
+    {
+      "id": "R5_complex_no_executor",
+      "description": "复合任务（含子任务）且高风险（≥4）却无任何智能体可整体执行（can_execute 为空）时，标记需人工介入",
+      "when": [
+        {"s": "?task", "p": "composed_of", "o": "?sub"},
+        {"s": "?task", "p": "has_risk_level", "o": {"gte": 4}},
+        {"not_exists": {"s": "?agent", "p": "can_execute", "o": "?task"}}
+      ],
+      "then": [
+        {"s": "?task", "p": "needs_manual_review", "o": true},
+        {"s": "?task", "p": "review_reason", "o": "no_executor"}
+      ]
+    },
+    {
+      "id": "R6_low_risk_solo",
+      "description": "低风险（≤2）且声明了能力要求的任务，可单智能体直接指派（单能力即达即可选）",
+      "when": [
+        {"s": "?task", "p": "has_risk_level", "o": {"lte": 2}},
+        {"s": "?task", "p": "requires_capability", "o": "?cap"}
+      ],
+      "then": [
+        {"s": "?task", "p": "eligible_solo_assignment", "o": true}
+      ]
+    }
+  ]
+}

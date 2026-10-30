@@ -61,6 +61,7 @@ if PROJECT_ROOT not in sys.path:
 from reasoner.engine import OntologyEngine
 from reasoner.pipeline_gate import run_gates
 from reasoner.proof import build_proof
+from reasoner import rules as rules_mod
 from config import load_config
 from domains import load_domain, load_domain_module
 from mcp.server.mcpserver import MCPServer
@@ -100,14 +101,16 @@ def build_server(get_engine, get_adapter, domain_name: str, description: str) ->
     mod = importlib.import_module(f"domains.{domain_name}.mcp")
     mod.register_tools(server, get_adapter)
 
-    # 通用工具（L1：与本体定义无关，任意 .owl 可用）；受控语义策略与调用护栏随领域包走
+    # 通用工具（L1：与本体定义无关，任意 .owl 可用）；策略/护栏/规则集随领域包走
     _register_generic_tools(server, get_engine,
                              policy_mod.load_policy(domain_name),
-                             guard_mod.load_guard_config(domain_name))
+                             guard_mod.load_guard_config(domain_name),
+                             default_rules=rules_mod.load_rules_from_domain(domain_name))
     return server
 
 
-def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=None) -> None:
+def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=None,
+                            default_rules=None) -> None:
     """注册通用工具（引擎直接提供，与本体定义无关）。
 
     policy（SemanticPolicy | None）：非空且 enabled 时启用语义白名单门禁——类/谓词
@@ -115,6 +118,8 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=No
     guard（ToolGuard | None）：非空且 enabled 时为全部通用工具加装调用护栏
     （预算熔断/循环拦截/缓存复用/审计留痕）；None 或未启用时逐字节向后兼容
     （wrap_server_tool 关闭态原样注册，不包装、不附加 _guard 字段）。
+    default_rules（list | None）：领域包 rules.json 的默认业务规则集（apply_rules
+    缺省使用；未配置时工具诚实提示而非报错）。
     """
 
     active = policy is not None and policy.enabled
@@ -226,6 +231,26 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=No
     def pipeline_gate(ttl: str, abox: str | None = None,
                       gates: list[str] | None = None) -> dict:
         return run_gates(ttl, abox, gates)
+
+    @tool(description=(
+        "自定义业务规则（通用）：对已物化图执行 JSON IF-THEN 规则（when 条件模式 + then 结论模板），"
+        "导出派生三元组报告——每条结论附 proof 依据链（命中规则 + 事实前提，键级对齐 explain_proof"
+        "的 mode/rule/axioms/premises/conclusion；custom_rule:* 为三类原生推理规则之外的第四类"
+        "来源标识）。单步执行：规则产物不作为其他规则输入；只读推导：不写回主图。when 支持"
+        "?变量绑定 / gte·lte·eq 数值算子 / not_exists 反条件（条件间 AND）；then 对象为字面量"
+        "或变量值，新谓词标 declared=false。rules 可选：内联 JSON 数组；缺省读领域包 rules.json"
+        "（未配置时诚实提示）。与 validate_shapes / query_sparql 互补：校验管合格，规则管推导，"
+        "CONSTRUCT 即席查询与资产化规则分工。"))
+    def apply_rules(rules: list | None = None) -> dict:
+        if rules is None:
+            if not default_rules:
+                return {"configured": False,
+                        "message": "领域包未配置 rules.json；可传内联 rules 数组使用"}
+            rules = default_rules
+        try:
+            return rules_mod.apply_rules(get_engine(), rules)
+        except ValueError as exc:
+            return {"error": f"规则校验失败：{exc}"}
 
 
 def _make_sighup_handler(reload_fn):
