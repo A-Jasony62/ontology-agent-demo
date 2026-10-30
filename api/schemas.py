@@ -1,17 +1,27 @@
 """API 请求/响应模型。"""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
 
 class ReasonRequest(BaseModel):
-    """结构化推理查询。"""
+    """结构化推理查询。
 
-    type: Literal["capability_match", "orchestrate", "assign"]
+    `type` 刻意不用 Literal 枚举：推理类型由「框架内置三种 ∪ 领域
+    CAPABILITY_HANDLERS 注册的键」共同决定，而领域是运行时可换的，
+    枚举会在进程启动那一刻就把类型列表冻结成某个领域的形状。
+    代价是 OpenAPI 文档里少一个下拉列表，用 description 补偿。
+    """
+
+    type: str = ""
     task: str = ""
     agent: str = ""
     persist: bool = False      # assign 增量落盘（REQ-05，001 批次能力经 API 暴露）
+    # 领域自定义参数：内置三种推理类型用不到，领域处理器从 req.params 取。
+    # 用自由字典而不是继续往这里加字段——每加一个字段都是把某个领域的
+    # 形状钉进框架（classify 的 capabilities/constraints 就是前车之鉴）。
+    params: dict[str, Any] | None = None
 
 
 class ClassifyRequest(BaseModel):

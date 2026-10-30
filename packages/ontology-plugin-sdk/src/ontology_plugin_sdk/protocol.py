@@ -16,6 +16,10 @@ P1-1 起契约**强制**：宿主加载器（本仓库里是 `domains.registry.l
 豁免方式只有一条——在领域包里声明 `CAPABILITIES`，把**不实现**的能力
 显式排除；声明了 `CAPABILITIES` 就等于承诺"清单内的方法我都实现了"。
 
+`CAPABILITIES` 允许出现框架没预见的名字（fault_diag 的 diagnose 就是探针）。
+这类"领域自有能力"由 `CAPABILITY_HANDLERS` 声明出口，加载器用
+`dangling_capabilities` 保证它至少有一个落点——见 `CAPABILITY_HANDLERS_ATTR`。
+
 框架提供 vs 领域实现：
     - `explain` / `graph_export` 只依赖引擎原语，由 `AdapterBase` 提供默认实现；
     - 其余 5 个是业务语义，必须由领域实现（或显式排除）。
@@ -45,6 +49,9 @@ __all__ = [
     "FRAMEWORK_METHODS",
     "REQUIRED_METHODS",
     "CAPABILITIES",
+    "CAPABILITY_HANDLERS_ATTR",
+    "capability_handlers",
+    "dangling_capabilities",
     "default_explain",
     "default_graph_export",
     "missing_methods",
@@ -73,6 +80,16 @@ REQUIRED_METHODS: tuple[str, ...] = BUSINESS_METHODS + FRAMEWORK_METHODS
 
 # 标准能力标识：领域包可用 CAPABILITIES 声明"我支持哪些"，缺省视为全量
 CAPABILITIES: tuple[str, ...] = REQUIRED_METHODS
+
+# 领域自声明能力的出口：适配器上可选的属性名，值为 {能力名: 处理器}。
+#
+# 为什么需要它：`CAPABILITIES` 里允许出现框架没预见的名字（例如 fault_diag
+# 的 diagnose），但出口层原先只认三张写死的推理表，声明了也无处可达——
+# "声明即承诺"于是只剩一半：既不会被拒绝，也不会真的开门。
+# 处理器表把这个缺口补成对称的两半：
+#     CAPABILITIES 说"我有什么"，CAPABILITY_HANDLERS 说"从哪进来"。
+# 处理器签名与框架内置表一致：(adapter, request) -> dict，因此可以共用同一张路由表。
+CAPABILITY_HANDLERS_ATTR = "CAPABILITY_HANDLERS"
 
 
 @runtime_checkable
@@ -145,17 +162,61 @@ def undeclared_missing(adapter: Any) -> list[str]:
     return [m for m in missing if m in declared]
 
 
+def capability_handlers(adapter: Any) -> dict[str, Any]:
+    """适配器注册的「能力 → 处理器」表（缺省为空表）。
+
+    容忍三种现状，都不视为契约错误：
+      - 没有该属性（只声明 CAPABILITIES、只走 MCP 的领域）；
+      - 属性为 None；
+      - 值不是 dict（例如误写成方法）——此时视为"没注册"，由
+        `dangling_capabilities` 统一报出来，而不是在这里抛类型错误。
+        加载器需要的是"哪些能力没落点"的完整清单，不是第一个出错的属性。
+    """
+    table = getattr(adapter, CAPABILITY_HANDLERS_ATTR, None)
+    if not isinstance(table, dict):
+        return {}
+    return {k: v for k, v in table.items() if callable(v)}
+
+
+def dangling_capabilities(adapter: Any) -> list[str]:
+    """声明了、却在框架里找不到任何落点的能力。
+
+    落点有三种，命中任一即可：
+      1. 契约方法（REQUIRED_METHODS 里的名字，对象上可调用）；
+      2. `CAPABILITY_HANDLERS` 里注册了处理器；
+      3. 对象上有同名可调用属性——典型是领域只经 MCP 暴露（`mcp.py` 自己
+         注册工具），框架无法也不该替它判断"这算不算够用"。
+
+    这三种之外的名字一定是笔误或半成品，加载期就该拒。此前这类声明会被
+    静默接受：能力表里多一个谁都不认识的名字，端点既不开门也不报错。
+    """
+    declared = getattr(adapter, "CAPABILITIES", None) or ()
+    handlers = capability_handlers(adapter)
+    out: list[str] = []
+    for cap in declared:
+        if cap in handlers:
+            continue
+        if callable(getattr(adapter, cap, None)):
+            continue
+        out.append(cap)
+    return out
+
+
 def supports(adapter: Any, capability: str) -> bool:
-    """端点门禁：方法存在 **且** 领域未在 CAPABILITIES 里显式排除。
+    """端点门禁：能力可达 **且** 领域未在 CAPABILITIES 里显式排除。
+
+    可达 = 对象上有同名方法，或 `CAPABILITY_HANDLERS` 里注册了处理器。
+    后者让"领域自有能力"能进同一张推理表：处理器只存在字典里、对象上并无
+    同名方法，若只认方法，声明了 diagnose 的领域调自己的端点反而拿 400。
 
     领域包未声明 CAPABILITIES 时视为全量能力（向后兼容）。
     """
-    if not callable(getattr(adapter, capability, None)):
-        return False
     declared = getattr(adapter, "CAPABILITIES", None)
-    if declared is None:
+    if declared is not None and capability not in declared:
+        return False
+    if callable(getattr(adapter, capability, None)):
         return True
-    return capability in declared
+    return capability in capability_handlers(adapter)
 
 
 # ---------------------------------------------------------------- 框架默认实现
