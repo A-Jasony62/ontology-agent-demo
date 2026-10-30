@@ -59,6 +59,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from reasoner.engine import OntologyEngine, SparqlTimeoutError
+from reasoner.merge_check import run_merge_check
 from reasoner.pipeline_gate import run_gates
 from reasoner.proof import build_proof
 from reasoner import rules as rules_mod
@@ -308,6 +309,17 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=No
         "无规则文件时如实说明。配 run_rules 使用：先看清单再执行。"))
     def list_rules(rules: list[str] | None = None) -> dict:
         return rules_mod.list_rules(rules)
+
+    @tool(description=(
+        "模块合并冲突预检（通用）：输入外部本体 RDF 文本（默认 Turtle），与当前引擎图做三类"
+        "冲突扫描——①同 URI 异定义（subClassOf/domain/range 签名差异，conflict 级）；"
+        "②名称冲突（同 rdfs:label 或同短名但 IRI 不同：同名不同义，warning 级需人工确认）；"
+        "③公理矛盾（incoming X ⊑ B 与 current X ⊑ A 且 A disjointWith B 不相容）。"
+        "返回 {summary, conflicts, warnings, info} 分级清单，每条附双侧事实对照与处置建议"
+        "（rename/align/skip）；纯新增实体归 info 不算冲突。只体检不合并：处置决策是人的"
+        "语义判断。零交集时 overlap=0 零冲突诚实报告；语法错 fail-fast 返回 error。"))
+    def merge_check(rdf_content: str, format: str = "turtle") -> dict:
+        return run_merge_check(get_engine().g, rdf_content, format)
 
 
 def _make_sighup_handler(reload_fn):
