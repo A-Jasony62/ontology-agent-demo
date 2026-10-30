@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增查询两段式超时（`reasoner/engine.py` + MCP / API 接线，~100 行内）：坏查询「限时一条明确报错、不挂死整机」——此前一条算不完的查询会拖住与 API / MCP / AI 助手同进程的整机
+  - 两段式语义（对齐 Jena ARQ `queryTimeout` 官方形态，如 `"500,10000"` 首条结果 500ms 内必出、整体 10s 封顶）：`kind=first`（首条结果就绪时限——查询可能卡在求值阶段）/ `kind=total`（整体完成时限——能出但太慢）
+  - 默认关闭（环境变量 `ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS` / `ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS`，未设/非正数 = 不启用）：两段均未启用时直通原执行路径，零线程开销、逐字节兼容；`query_sparql` 亦可显式传 `first_ms` / `total_ms`
+  - 结构化错误而非挂住：MCP `query_sparql` / `run_predefined_query` 返回 `{error: query_timeout, kind, limit_ms, hint}`；API `/api/query` 返回 408 与结构化详情；单次超时仅放弃该查询，后续查询与服务不受影响
+  - 局限如实声明：Python 线程不可强杀（超时后后台线程跑完自然结束，单机规模无害）；彻底隔离的子进程方案为后续独立改造——不塞本 PR
+  - 实现方式：rdflib 无超时参数——起后台线程跑查询、主线程按两段时限放弃结果
+
 ## [0.6.0] - 2026-10-30
 
 本轮为「领域包插件化」批次：领域包从"随仓库入库的运行态"改为"可安装的插件"，加载位置与默认领域由配置决定，为后续热加载与多领域铺路。
