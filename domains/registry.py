@@ -39,6 +39,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -127,6 +128,22 @@ def _restore(snapshot: dict[str, ModuleType]) -> None:
         sys.modules[key] = mod
 
 
+def _drop_bytecode_cache(pkg_dir: Path) -> None:
+    """删掉领域包内的 `__pycache__`，让 reload 真的重读源码。
+
+    为什么非删不可：CPython 判定 .pyc 是否可用只比对（源文件 mtime 秒, 文件大小）。
+    `VALUE = 1` 改成 `VALUE = 2` 这种改动**大小不变**，若编辑落在同一秒内，
+    旧 pyc 被判为新鲜，reload 表面成功、实际跑的是上一版代码——热重载最不该
+    出现的失败模式：不报错，只是没生效。
+
+    这个 bug 在 macOS 开发机上一直看不见：WorkBuddy 注入的 sitecustomize 把
+    `sys.dont_write_bytecode` 设成了 True，本地根本不产生 pyc。CI（Linux）上
+    一跑就红。
+    """
+    for cache in pkg_dir.rglob("__pycache__"):
+        shutil.rmtree(cache, ignore_errors=True)
+
+
 def _package_dir(name: str, settings: DomainConfig | None, root: str | Path | None) -> Path:
     if root is not None:
         base = Path(root).expanduser().resolve()
@@ -175,6 +192,9 @@ def load_domain_module(
     _ensure_parent_package()
     snapshot = _snapshot(full)
     _purge(full)
+    if reload:
+        # 只对 reload 清缓存：首次加载时 pyc 是有效的，删了每次启动都多编译一遍
+        _drop_bytecode_cache(pkg_dir)
 
     spec = importlib.util.spec_from_file_location(
         full,

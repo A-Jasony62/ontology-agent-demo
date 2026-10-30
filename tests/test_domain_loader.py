@@ -137,6 +137,40 @@ def test_reload_picks_up_changes(tmp_path, root):
     assert sys.modules["domains.probe"] is second
 
 
+def test_reload_ignores_stale_bytecode(tmp_path, root):
+    """同尺寸改动 + 同 mtime 秒，reload 仍必须读到新代码。
+
+    CPython 判定 .pyc 是否可用只比对（源文件 mtime 秒, 文件大小）。`VALUE = 1`
+    改成 `VALUE = 2` 大小不变，若编辑还落在同一秒内，旧 pyc 会被判为新鲜——
+    reload 表面成功、实际跑的还是上一版。热重载最不该出现的失败模式：不报错，
+    只是没生效。
+
+    这里把 mtime 显式改回原值，让"同一秒"不依赖运气；同时打开字节码写入，
+    因为 WorkBuddy 注入的 sitecustomize 把 sys.dont_write_bytecode 设成了 True，
+    不打开的话本机根本不产生 pyc，这条断言等于没写（CI 上却是红的）。
+    """
+    pkg = _make_pkg(root, "probe", sub_value=1)
+    cfg = _settings(tmp_path, root)
+    sub = pkg / "sub.py"
+
+    prev = sys.dont_write_bytecode
+    sys.dont_write_bytecode = False
+    try:
+        first = load_domain_module("probe", settings=cfg)
+        assert first.VALUE == 1
+
+        before = sub.stat()
+        sub.write_text("VALUE = 2\n", encoding="utf-8")
+        assert sub.stat().st_size == before.st_size, "本用例要求改动前后同尺寸"
+        os.utime(sub, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+        second = load_domain_module("probe", settings=cfg, reload=True)
+    finally:
+        sys.dont_write_bytecode = prev
+
+    assert second.VALUE == 2
+
+
 def test_failed_reload_rolls_back(tmp_path, root):
     pkg = _make_pkg(root, "probe", sub_value=7)
     cfg = _settings(tmp_path, root)

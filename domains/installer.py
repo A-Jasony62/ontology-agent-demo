@@ -56,6 +56,12 @@ def _probe_import(pkg_dir: Path) -> ModuleType:
 
     模块名用随机前缀而非 `domains.<name>`：源目录名可能不是合法标识符
     （如 `my-domain`），也不该污染 domains 命名空间。
+
+    **导入期间禁用字节码写入**。校验会对源目录和 staging 各导入一次，若允许写
+    pyc，就会在用户给的那个包里留下 `__pycache__`——安装器"只读源、只改 root"
+    的承诺当场破掉，装完的副本里也会带上 `__pycache__`（CI 的
+    test_install_excludes_pycache 正是这么红的）。这个副作用在开发机上看不见，
+    因为 WorkBuddy 注入的 sitecustomize 把 sys.dont_write_bytecode 设成了 True。
     """
     name = f"_onto_probe_{uuid.uuid4().hex[:8]}"
     spec = importlib.util.spec_from_file_location(
@@ -67,6 +73,8 @@ def _probe_import(pkg_dir: Path) -> ModuleType:
         raise InstallError(f"无法为 {pkg_dir} 构建导入规格")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
+    prev_dont_write = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
         spec.loader.exec_module(module)
     except Exception as exc:
@@ -74,6 +82,8 @@ def _probe_import(pkg_dir: Path) -> ModuleType:
         raise InstallError(
             f"领域包导入失败（{pkg_dir.name}）：{type(exc).__name__}: {exc}"
         ) from exc
+    finally:
+        sys.dont_write_bytecode = prev_dont_write
     return module
 
 
@@ -196,6 +206,10 @@ def install(
         shutil.copytree(src_path, staging, ignore=_IGNORE, symlinks=False)
         # 2) 复制后再校验一次：防止复制过程中的损坏，并确保拷贝的是可加载的副本
         validate_package(staging, expect_name=name)
+        # 3) 兜底清一遍字节码：_probe_import 已禁用写 pyc，但"安装产物里没有
+        #    __pycache__"是安装器的对外承诺，不该只靠上游一处小心翼翼来维持
+        for cache in staging.rglob("__pycache__"):
+            shutil.rmtree(cache, ignore_errors=True)
 
         if target.exists():
             backup_root = Path(backup_dir) if backup_dir else (root_path.parent / "backups" / "domains")

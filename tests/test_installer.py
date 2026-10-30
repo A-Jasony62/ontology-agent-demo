@@ -70,6 +70,29 @@ def test_install_excludes_pycache(tmp_path):
     assert not (root / "p" / "__pycache__").exists()
 
 
+def test_install_does_not_pollute_source_with_bytecode(tmp_path):
+    """校验会 import 一次源包，这次 import 不许在源目录留下 `__pycache__`。
+
+    安装器对外的承诺是"只读源、只改 root"。禁用字节码之前，它会把自己校验用的
+    `__pycache__` 留进用户给的那个包（`examples/` 里就会多出目录），装完的副本
+    也带着它——CI 的 test_install_excludes_pycache 正是这么红的。
+
+    这条为什么在开发机上一直绿：WorkBuddy 注入的 sitecustomize 把
+    `sys.dont_write_bytecode` 设成了 True，本地压根不产生 pyc。所以这里显式
+    打开写字节码，否则这条断言等于没测。
+    """
+    src = make_pkg(tmp_path / "examples", "p")
+    prev = sys.dont_write_bytecode
+    sys.dont_write_bytecode = False        # 模拟普通环境（CI / 用户机器）
+    try:
+        install(src, root=tmp_path / "domains")
+    finally:
+        sys.dont_write_bytecode = prev
+
+    assert not (src / "__pycache__").exists(), "安装器往源目录写了字节码"
+    assert not (tmp_path / "domains" / "p" / "__pycache__").exists()
+
+
 def test_install_with_explicit_name(tmp_path):
     """源目录名不合法（含横线）且包内未声明 NAME 时，用 --name 指定安装名。"""
     src = make_pkg(tmp_path / "src", "my-domain", declare_name=False)
