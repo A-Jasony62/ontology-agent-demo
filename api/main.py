@@ -58,7 +58,12 @@ class LazyStaticFiles(StaticFiles):
         pass
 
 from reasoner.engine import get_engine, OntologyEngine
-from reasoner.protocol import supports, undeclared_missing
+from reasoner.protocol import (
+    capability_handlers,
+    dangling_capabilities,
+    supports,
+    undeclared_missing,
+)
 from domains import DomainManager, DomainContractError, DomainNotFoundError
 from .schemas import (
     ReasonRequest, ClassifyRequest, RevokeRequest, ImportRequest,
@@ -246,6 +251,12 @@ def health():
         "contract": {
             "missing": undeclared_missing(ADAPTER),
             "declared": list(getattr(ADAPTER, "CAPABILITIES", []) or []) or None,
+            # 声明了却没有落点的能力（加载器本该拒绝；这里再暴露一次，
+            # 便于排查运行期手动换上的适配器）
+            "dangling": dangling_capabilities(ADAPTER),
+            # 实际可从 POST /api/reason 触达的类型：框架内置 ∪ 领域处理器，
+            # 再按领域声明过滤。集成方据此决定调什么，不用猜。
+            "reason_kinds": sorted(k for k in _reason_kinds(ADAPTER) if supports(ADAPTER, k)),
         },
         "dirty": ADAPTER.change_count > 0,
         "pending_changes": ADAPTER.change_count,
@@ -275,6 +286,12 @@ def ontology():
 # 此前是 if/elif 枚举：加一种推理类型要改端点、改门禁、改文档三处，
 # 且"当前领域支持哪些类型"散落在分支里无法回答。改成表之后，
 # 支持清单 = 表的键 ∩ 领域 CAPABILITIES，错误消息可以直接给出。
+#
+# 这张表是**框架内置**的三个类型，它们对应 agent_task 形状的业务语义。
+# 领域自有的推理类型（如 fault_diag 的 diagnose）不进这里——它们由适配器的
+# `CAPABILITY_HANDLERS` 声明，运行时并入同一张表，见 `_reason_kinds()`。
+# 保留框架表独立存在的理由：它不随领域切换而变，且"框架预见了哪些"本身
+# 是有信息量的——表里没有的名字，一定来自领域。
 REASON_KINDS = {
     "capability_match": lambda a, req: a.capability_match(_uri(req.task)),
     "orchestrate": lambda a, req: a.orchestrate(_uri(req.task)),
@@ -282,19 +299,39 @@ REASON_KINDS = {
 }
 
 
+def _reason_kinds(adapter) -> dict:
+    """当前适配器可用的推理类型表：框架内置 ∪ 领域注册的处理器。
+
+    领域处理器不能覆盖框架内置键——同名时以内置为准。理由不是"框架优先"，
+    而是内置键的语义（capability_match 等）属于契约：被领域悄悄换成另一种
+    行为，调用方按契约写的代码就会拿到形状不符的返回。
+    """
+    table = dict(REASON_KINDS)
+    for kind, handler in capability_handlers(adapter).items():
+        table.setdefault(kind, handler)
+    return table
+
+
 @app.post("/api/reason")
 def reason(req: ReasonRequest):
     _require_default_ontology()
-    kind = REASON_KINDS.get(req.type)
+    table = _reason_kinds(ADAPTER)
+    kind = table.get(req.type)
     if kind is None:
-        supported = sorted(set(REASON_KINDS) & set(getattr(ADAPTER, "CAPABILITIES", None) or ()))
+        declared = set(getattr(ADAPTER, "CAPABILITIES", None) or ())
+        supported = sorted(set(table) & declared)
         raise HTTPException(
             status_code=400,
             detail=(f"不支持的推理类型: {req.type}；"
                     f"当前领域「{getattr(ADAPTER, 'NAME', '?')}」支持：{supported or '（无）'}"),
         )
     _require_capability(req.type)
-    return kind(ADAPTER, req)
+    try:
+        return kind(ADAPTER, req)
+    except ValueError as exc:
+        # 领域处理器的参数校验失败属于**客户端**错误。不让它冒成 500：
+        # 领域包不该为了给个正确的状态码去 import FastAPI。
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/classify")

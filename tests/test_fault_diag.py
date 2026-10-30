@@ -70,32 +70,108 @@ def test_adapter_builds_without_any_task_orchestration_method(fd):
     assert "diagnose" in fd.adapter.CAPABILITIES
 
 
-def test_custom_capability_is_not_contract_checked(fd):
-    """【通用性】CAPABILITIES 里写一个框架没预见的名字（diagnose），契约校验不管它。
+def test_custom_capability_is_contract_checked_for_landing(fd):
+    """【通用性】自定义能力不在 REQUIRED_METHODS 里，但"必须有落点"这条管它。
 
-    `undeclared_missing` 只对 REQUIRED_METHODS 做判断，所以自定义能力
-    **既不会被要求实现，也不会被保护**——声明了却漏写方法，加载期不报错。
-    这不是 bug（框架无从知道异构领域该有什么），但要知道边界在哪。
+    分界线值得记清楚，两者常被混为一谈：
+      - 框架**不要求**每个领域都有 diagnose——它无从知道异构领域该有什么；
+      - 框架**要求**声明了就至少有一个落点（同名方法 / 注册的处理器），
+        否则名字写错也静默通过。加载器现在会拒。
     """
-    from reasoner.protocol import REQUIRED_METHODS, undeclared_missing, supports
+    from reasoner.protocol import (
+        REQUIRED_METHODS,
+        dangling_capabilities,
+        supports,
+        undeclared_missing,
+    )
 
     assert "diagnose" not in REQUIRED_METHODS
-    assert undeclared_missing(fd.adapter) == []
+    assert undeclared_missing(fd.adapter) == []       # 不强制实现
+    assert dangling_capabilities(fd.adapter) == []    # 但必须有落点
     assert supports(fd.adapter, "diagnose") is True
 
 
-def test_custom_capability_has_no_http_route(fd):
-    """【通用性】自定义能力没有 HTTP 出口——钉住现状，不是假通过。
+@pytest.fixture
+def fd_api(monkeypatch):
+    """把 api.main 的运行态临时切到 fault_diag，用完原样还回去。
 
-    /api/reason 的 REASON_KINDS 是框架写死的三个键。领域声明了 diagnose，
-    适配器上也确实 callable，但 HTTP 层无处可达（MCP 由领域自己注册工具，
-    那条路是通的）。要把 diagnose 暴露成 REST，得先给"领域自有端点"设计
-    注册机制——本次不做，记在这里免得以后误以为声明即自动有端点。
+    不用 isolated_api：那个夹具存在目的是"让写盘落到 tmp 副本"，这里只需要
+    "运行态是异构领域"这一件事，多复制一份只会让夹具依赖变重。
     """
-    from api.main import REASON_KINDS
+    from fastapi.testclient import TestClient
 
-    assert "diagnose" not in REASON_KINDS
-    assert callable(getattr(fd.adapter, "diagnose", None))
+    from config.loader import DomainConfig
+    from domains import DomainManager
+
+    import api.main as M
+
+    settings = DomainConfig(
+        root=EXAMPLES, default=TARGET, watch_enabled=False, watch_interval=0.0,
+        sources={}, servers={},
+    )
+    mgr = DomainManager(settings)
+    mgr.activate(TARGET)
+    monkeypatch.setattr(M, "DOMAINS", mgr)
+    M._sync_runtime(force=True)
+    try:
+        yield TestClient(M.app)
+    finally:
+        # 还原点是 DOMAINS（唯一真相源）。只把 ENGINE/ADAPTER 指回原处是不够的：
+        # `in_domain_mode()` 仍按新 manager 判定，后续用例会集体跑在错误领域上。
+        monkeypatch.undo()
+        M._sync_runtime(force=True)
+
+
+def test_custom_capability_is_reachable_over_http(fd_api):
+    """【通用性】领域自有能力能通过通用端点触达，而不用框架为它改代码。
+
+    这条是 `test_custom_capability_has_no_http_route` 的继任者。当时钉住的是
+    缺口：REASON_KINDS 只有三个键，diagnose 声明了却只在 MCP 那条路上通。
+    现在领域用 CAPABILITY_HANDLERS 自报出口，框架把表并进来——"声明"与
+    "可达"终于对上了。
+    """
+    resp = fd_api.post(
+        "/api/reason", json={"type": "diagnose", "params": {"asset": "pump_01"}}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["component"] == "pump_01"
+    assert "faults" in body
+
+
+def test_custom_capability_rejects_bad_params_as_client_error(fd_api):
+    """领域处理器的参数校验失败要变 400，不能冒成 500。
+
+    领域包不该为了给个正确状态码去 import FastAPI——它抛 ValueError 即可。
+    """
+    resp = fd_api.post("/api/reason", json={"type": "diagnose"})
+    assert resp.status_code == 400
+    assert "asset" in resp.json()["detail"]
+
+
+def test_health_reports_reachable_reason_kinds(fd_api):
+    """health 直接给出"能调哪些类型"，集成方不用猜，也不用读源码。"""
+    contract = fd_api.get("/api/health").json()["contract"]
+    assert "diagnose" in contract["reason_kinds"]
+    assert contract["dangling"] == []
+    # 未声明的编排类能力不该出现在可达清单里
+    assert "orchestrate" not in contract["reason_kinds"]
+
+
+def test_domain_handler_cannot_override_framework_kind():
+    """领域处理器与框架内置键同名时，以内置为准。
+
+    不是"框架优先"的意气之争：内置键的语义属于契约，被领域悄悄换掉之后，
+    按契约调用的集成方会拿到形状不符的返回，而错误现场离原因很远。
+    """
+    import api.main as M
+
+    class _Sneaky:
+        CAPABILITIES = ("capability_match",)
+        CAPABILITY_HANDLERS = {"capability_match": lambda a, r: {"hijacked": True}}
+
+    table = M._reason_kinds(_Sneaky())
+    assert table["capability_match"] is M.REASON_KINDS["capability_match"]
 
 
 # ---------------------------------------------------------------- 推理

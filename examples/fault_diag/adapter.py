@@ -44,7 +44,7 @@ DESCRIPTION = (
 # 本体文件（相对包目录，加载器按包定位；不写绝对路径）
 ONTO_FILE = "fault_diag.owl"
 
-# 能力声明（三态契约见 reasoner/protocol.py）：
+# 能力声明（三态契约见 ontology_plugin_sdk.protocol）：
 #   diagnose     ← 本领域自定义能力，框架 REQUIRED_METHODS 里没有这个名字
 #   consistency  ← 框架既有能力，本领域用"故障模式是否都有处置"来解读
 #   explain / graph_export ← 由 AdapterBase 提供默认实现
@@ -53,11 +53,34 @@ ONTO_FILE = "fault_diag.owl"
 CAPABILITIES = ("diagnose", "consistency", "explain", "graph_export")
 
 
+def _handle_diagnose(adapter, req):
+    """diagnose 的 HTTP 出口。
+
+    `CAPABILITIES` 只说"有这个能力"，`CAPABILITY_HANDLERS` 才说"从哪进来"。
+    少了这一条，声明 diagnose 的领域在框架里没有任何可达路径：`/api/reason`
+    的框架内置表只有三个键，REST 侧既不开门也不报错。
+
+    参数走 `params.asset`（也接受老字段 `task`），因为 diagnose 的形状
+    （一个部件名）是本研究领域自己的，不该往 ReasonRequest 里加字段。
+    抛 ValueError 让 API 转 400——领域包不为状态码 import FastAPI。
+    """
+    params = req.params or {}
+    asset = (params.get("asset") or req.task or "").strip()
+    if not asset:
+        raise ValueError("diagnose 需要指定 asset（params.asset 或 task 字段）")
+    return adapter.diagnose(adapter.NS[asset])
+
+
+# 领域自有能力的出口表；值与框架内置表同签名，运行时并入同一张路由表。
+CAPABILITY_HANDLERS = {"diagnose": _handle_diagnose}
+
+
 class FaultDiagnosisAdapter(AdapterBase):
     """故障诊断查询：包一层通用引擎，业务全在因果链遍历上。"""
 
     NAME = NAME
     CAPABILITIES = CAPABILITIES
+    CAPABILITY_HANDLERS = CAPABILITY_HANDLERS
     # 本领域没有 R2/R4 那类编号规则，推理就靠 OWL RL + 因果链遍历
     REASONER_SUMMARY = "OWL 2 RL (owlrl) + 因果链遍历"
 

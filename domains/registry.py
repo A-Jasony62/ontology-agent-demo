@@ -293,22 +293,33 @@ def load_domain(name: str, engine, config=None, *, settings: DomainConfig | None
 
 
 def _validate_adapter(name: str, adapter) -> None:
-    from ontology_plugin_sdk import undeclared_missing
+    from ontology_plugin_sdk import dangling_capabilities, undeclared_missing
 
     missing = undeclared_missing(adapter)
-    if not missing:
-        return
-    declared = getattr(adapter, "CAPABILITIES", None)
-    hint = (
-        "未声明 CAPABILITIES，视为要求全量能力"
-        if declared is None
-        else f"已声明 CAPABILITIES={list(declared)!r}，但清单内方法未实现"
-    )
-    raise DomainContractError(
-        f"领域包 {name!r} 的适配器未满足契约：缺 {', '.join(missing)}（{hint}）。"
-        f"契约见 ontology_plugin_sdk.protocol；只想实现部分能力时，用 CAPABILITIES "
-        f"把不实现的能力排除，或在 AdapterBase 上继承框架默认实现。"
-    )
+    if missing:
+        declared = getattr(adapter, "CAPABILITIES", None)
+        hint = (
+            "未声明 CAPABILITIES，视为要求全量能力"
+            if declared is None
+            else f"已声明 CAPABILITIES={list(declared)!r}，但清单内方法未实现"
+        )
+        raise DomainContractError(
+            f"领域包 {name!r} 的适配器未满足契约：缺 {', '.join(missing)}（{hint}）。"
+            f"契约见 ontology_plugin_sdk.protocol；只想实现部分能力时，用 CAPABILITIES "
+            f"把不实现的能力排除，或在 AdapterBase 上继承框架默认实现。"
+        )
+
+    # 声明即承诺的第二半（P4 后补）：清单里每个名字都得有落点。
+    # 上一段只审 REQUIRED_METHODS，领域自有的能力名（diagnose 这类）白名单外，
+    # 写错一个字也照样加载成功——之后既不报错也不开门，最难查的一种状态。
+    dangling = dangling_capabilities(adapter)
+    if dangling:
+        raise DomainContractError(
+            f"领域包 {name!r} 声明了无法到达的能力：{', '.join(dangling)}。"
+            f"名字必须至少落在以下之一：契约方法（ontology_plugin_sdk.REQUIRED_METHODS）、"
+            f"CAPABILITY_HANDLERS 里注册的处理器、或适配器上的同名可调用属性"
+            f"（只经 MCP 暴露的能力属于最后一种）。"
+        )
 
 
 def list_domains(*, settings: DomainConfig | None = None) -> list[dict]:
