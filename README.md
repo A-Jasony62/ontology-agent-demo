@@ -65,10 +65,13 @@ cd ontology-agent-demo
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-# 2. 构建本体（可选，仓库已内置 domains/agent_task/agent_task_ontology.owl）
+# 2. 安装示例领域（首次必做；domains/ 是运行态目录，不随仓库分发）
+.venv/bin/python scripts/ontologyctl.py domain install --from ./examples/agent_task
+
+# 3. 构建本体（可选，装好的领域包里已带 agent_task_ontology.owl）
 .venv/bin/python scripts/build_ontology.py
 
-# 3. 启动推理 API + Demo 页面
+# 4. 启动推理 API + Demo 页面
 .venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -251,10 +254,10 @@ get_engine().individuals("Task")    # 通用查询（任意本体可用）
 不再在配置中重复维护——owl 是中文名的唯一事实源。
 **属性名采用"语义名即本体短名"约定**：属性与本体同名时无需配置（`SemanticConfig.resolve()` 兜底），
 换本体（属性名不同）时在 config.json 覆盖即可。
-**语义配置与推导链展开均为引擎配套的通用机制**（`reasoner/semantic.py` 配置容器+JSON 加载、
-`reasoner/derivation.py` 声明式推导链解释器，均不含领域词汇），领域包只提供数据。
-**领域数据可编辑**：改 `domains/agent_task/config.json` 即改领域语义与推导链叙事，无需动 Python。
-换领域 = 在 `domains/` 下新增一个包（暴露 `NAME / DESCRIPTION / create_adapter`），
+**语义配置与推导链展开均为引擎配套的通用机制**（`ontology_plugin_sdk/semantic.py` 配置容器+JSON 加载、
+`ontology_plugin_sdk/derivation.py` 声明式推导链解释器，均不含领域词汇），领域包只提供数据。
+**领域数据可编辑**：改领域包里的 `config.json` 即改领域语义与推导链叙事，无需动 Python。
+换领域 = 提供一个领域包（暴露 `NAME / DESCRIPTION / create_adapter`，依赖 `ontology_plugin_sdk`），
 核心引擎、API、MCP、CLI 无需改动。
 
 ```python
@@ -278,20 +281,28 @@ adapter = AgentTaskAdapter(get_engine(), DEFAULT_CONFIG.update(
 
 ```
 ontology-agent-demo/
-├── reasoner/
+├── packages/ontology-plugin-sdk/      # 领域插件 SDK：领域包唯一依赖，自身不依赖宿主
+│   └── src/ontology_plugin_sdk/
+│       ├── protocol.py                # 适配器契约 AdapterProtocol / AdapterBase / 契约三态判据
+│       ├── semantic.py                # 语义配置容器 + JSON 加载器
+│       ├── derivation.py              # 声明式推导链解释器
+│       ├── abox.py                    # ABox 事务仓库（删除/撤回/批量导入/增量落盘）
+│       ├── context.py                 # PluginContext（引擎 + 包目录 + 配置 + 原语 + ABox 工厂）
+│       ├── engine.py                  # EngineProtocol + local / resolve_ns
+│       └── fakes.py                   # FakeEngine：领域包脱离宿主做单测
+├── reasoner/                          # 宿主：引擎与框架能力
 │   ├── engine.py                      # 通用引擎（加载/推理/SPARQL/通用查询，与本体无关）
-│   ├── semantic.py                    # 通用语义配置（不可变键值容器 + JSON 加载器，零领域词汇）
-│   └── derivation.py                  # 通用推导链解释器（声明式步骤规则展开，零领域词汇）
-├── domains/                           # 领域适配器（独立目录，运行时动态加载）
-│   ├── __init__.py                    # list_domains / load_domain 注册表
-│   └── agent_task/                    # 「智能体任务编排」领域（自包含）
-│       ├── agent_task_ontology.owl    # 本体定义（Protege 可打开，核心定义）
-│       ├── extensions/                # 增量扩展目录（REQ-06：classify/assign 持久化块，按文件名排序加载）
-│       ├── __init__.py                # 纯导出（NAME/DESCRIPTION/ONTO_FILE/EXTENSIONS_DIR/适配器符号）
-│       ├── adapter.py                 # 领域适配器（R2/R4 规则 + 5 个查询方法 + 图谱导出 + 增量持久化）
-│       ├── config.json                # 领域语义配置（类角色映射/结构数据；中文名见 owl rdfs:label，属性名默认同本体短名）
-│       ├── derivation.json            # 领域推导链配置（文案模板 templates + 展开规则 derivations）
-│       └── mcp.py                     # 领域 MCP 工具注册（8 个领域工具，register_tools）
+│   ├── pipeline_gate.py               # G1–G4 闸门（G4 形状按当前领域包解析）
+│   ├── cq/                            # CQ 出题 / 质检 / TBox 草稿工位（领域中立）
+│   └── {protocol,semantic,derivation,abox,plugin}.py   # 兼容层：re-export SDK，勿新增逻辑
+├── domains/                           # 运行态 root（gitignore，需 domain install）
+│   ├── registry.py                    # load_domain / 契约校验 / PLUGIN_API 版本比对
+│   ├── manager.py                     # DomainManager：当前领域唯一真相源 + L1/L2/L3 切换
+│   └── installer.py                   # install / uninstall 与内容哈希
+├── examples/                          # 随仓库分发的示例领域包（模板，不自动生效）
+│   ├── agent_task/                    # 完整业务领域（7 能力 / R2 R4 / ABox 写入 / 8 个 MCP 工具）
+│   ├── fault_diag/                    # 异构领域（诊断因果链 / 三级类层次 / 自定义能力 diagnose）
+│   └── _minimal/                      # 零复制验收物（1 类 3 个体，0 业务方法）
 ├── api/
 │   ├── main.py                        # FastAPI（领域端点走适配器 + 通用端点走引擎）
 │   └── schemas.py                     # 请求模型
@@ -299,12 +310,13 @@ ontology-agent-demo/
 ├── frontend/index.html                # 图谱可视化展示页
 ├── scripts/
 │   ├── build_ontology.py              # 一键重建本体（含结构自检）
+│   ├── ontologyctl.py                 # domain install / list / use / uninstall
 │   ├── start.sh                       # 一键启动（venv → 依赖 → 服务 → 浏览器）
 │   └── demo.sh                        # 一键演示（curl 串演核心接口）
 ├── docs/
 │   └── guide/                         # 《本体上手指南》9 篇（MkDocs 构建在线站点）
 ├── assets/demo.png                    # README 演示截图
-├── tests/                             # 推理 + API + 增量持久化自动化测试（pytest）
+├── tests/                             # 推理 / API / 插件 / 热切换 / SDK 自动化测试（pytest）
 ├── .github/workflows/                 # CI（pytest × 3.10-3.12）+ GitHub Pages
 ├── Makefile / docker-compose.yml / Dockerfile / pyproject.toml
 └── README.md
@@ -345,9 +357,10 @@ URL 填 `http://127.0.0.1:9000/mcp`，保存后即可在对话中直接调用。
 
 ## 开发与贡献
 
-- **测试**：`make test`（pytest，29 项，含推理规则与 API 闭环）；CI 在 push / PR 时对 Python 3.10–3.12 全量跑。
+- **测试**：`make test`（pytest，360 项，含推理规则、插件契约、热切换与 SDK 边界）；CI 在 push / PR 时对 Python 3.10–3.12 全量跑。
 - **文档**：指南用 MkDocs 构建，推送 `main` 后由 CI 自动构建并部署 GitHub Pages；本地 `make docs` 预览需 Python 3.10–3.12（当前机器 3.14 暂无 watchdog 轮子，故本地构建在 CI 上验证）。
-- **可安装包**：`pip install -e .`（pyproject.toml，依赖与 requirements.txt 一致）。
+- **可安装包**：`pip install -e .`（pyproject.toml，依赖与 requirements.txt 一致）。领域插件 SDK 是
+  同仓库的 workspace 包，`requirements.txt` 已含 `-e ./packages/ontology-plugin-sdk`，会一起装上。
 - 欢迎提 Issue / PR；新增领域见指南篇 8。
 
 ## 备注
