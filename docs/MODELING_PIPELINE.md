@@ -21,7 +21,7 @@
 | 缺口 | ① 无"从表结构自动生成骨架"；② 无 LLM 辅助公理补全；③ 无 DL 级推理验证（OWL-Full 检测 / HermiT 一致性）；④ 查询暴露缺"物化快照导出"（GraphRAG/Fuseki 数据源） |
 | 方案 | 新增 `pipeline/` 四阶段流水线：**S1 骨架生成 → S2 公理补全 → S3 推理验证 → S4 查询暴露**，产物为标准 OWL 2 文件 + 领域包，**零改动复用现有推理服务** |
 | 关键依据 | 数据库自动映射的可靠度分层（结构层 80–90% / 关系层 60–70% / 约束层 ~40% / 业务公理 <30%）；"主键→inverse functional 数据属性"会落入 OWL-Full 的陷阱 → 必须设 DL 格式闸门 |
-| 验收 | 用现有 `agent_task` 领域反推的数据字典跑通流水线，产物与手工本体做 diff，四道闸门全绿，`make test` 38 项全绿 |
+| 验收 | 用现有 `agent_task` 领域反推的数据字典跑通流水线，产物与手工本体做 diff，四道闸门全绿，`make test` 380 项全绿 |
 | 价值（对管理者） | 建本体成本从"专家人周"降为"数据字典 + 过目清单"（小时级）；推理质量有闸门兜底，不依赖个人经验；流水线可复用，新增领域只写数据字典 |
 
 ---
@@ -37,7 +37,7 @@
 | 领域包机制 | `domains/` | 本体 + config.json + derivation.json + adapter.py + mcp.py 自包含，动态加载 |
 | 多通道出口 | `api/` + `mcp/` + `scripts/query.py` | REST :8000 / MCP :9000 / CLI 双通道 |
 | 部署 | `Dockerfile` / `docker-compose.yml` | api + mcp 两服务 |
-| 测试基线 | `tests/` | 38 项，推理规则 + API 闭环 |
+| 测试基线 | `tests/` | 380 项，推理规则 + API 闭环 |
 
 ### 1.2 缺口（本方案补的四块）
 
@@ -450,7 +450,7 @@ def export_materialized(owl_path: str, out_ttl: str) -> None:
 | 通道 | 消费者 | 数据 |
 |---|---|---|
 | REST `/api/reason` 等 | 程序 / 前端 | 领域查询 + 推导链 |
-| MCP `:9000/mcp` | 智能体（豆包） | 14 个工具 |
+| MCP `:9000/mcp` | 智能体（豆包） | 26 个工具 |
 | SPARQL（Fuseki/Oxigraph） | 分析工具 | 物化快照（S4 导出） |
 | GraphRAG API | 智能体 / 检索服务 | 物化快照 + 向量库 |
 

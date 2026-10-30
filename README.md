@@ -28,12 +28,12 @@
 | ---- | ---- | ---- |
 | **OWL 2 RL 推理引擎** | 加载 OWL 本体并物化推理；SPARQL / 类层次 / 个体 / 属性查询 | `scripts/query.py classes --local` |
 | **业务规则 R1–R4** | 能力匹配、任务聚合、依赖传递、合规冲突检测，输出可解释推导链 | `make demo` |
-| **REST API** | 13+ 端点：推理 / 解释 / 一致性 / 分类 / SPARQL / OWL 上传 | `http://127.0.0.1:8000/docs` |
-| **MCP Server** | 14 个工具，智能体（豆包等）一行配置接入 | `make mcp` |
+| **REST API** | 29 个端点：推理 / 解释 / 一致性 / 分类 / SPARQL / OWL 上传 | `http://127.0.0.1:8000/docs` |
+| **MCP Server** | 26 个工具（领域 9 + 通用/建模 17），智能体（豆包等）一行配置接入 | `make mcp` |
 | **图谱工作台** | React 工作台：三视图图谱、OWL 源码编辑、导入导出、可视化编辑 | `npm run dev` |
 | **CLI 双通道** | HTTP 优先、失败回退内嵌引擎（`--local` 零依赖） | `python scripts/query.py -h` |
 | **Docker 一键起** | 多阶段构建，compose 起 API + MCP | `docker compose up` |
-| **学习指南** | 9 篇《本体上手指南》在线文档，章节↔代码对照 | [在线阅读](https://jasony62.github.io/ontology-agent-demo/) |
+| **学习指南** | 9 篇《本体上手指南》随仓库分发，章节↔代码对照 | [本地阅读](docs/guide/README.md) |
 
 ## 快速开始
 
@@ -80,7 +80,7 @@ python3 -m venv .venv
 ### 运行测试与一键演示
 
 ```bash
-.venv/bin/python -m pytest tests/ -v      # 38 项测试
+.venv/bin/python -m pytest tests/ -v      # 380 项测试
 make demo                                  # 按顺序跑一遍核心接口（需服务已启动）
 ```
 
@@ -148,23 +148,33 @@ npm run build               # 产物 frontend/app/dist
 
 ## 架构
 
+三层依赖：**领域插件 SDK → 宿主（引擎与框架）→ 运行态领域包**。领域包只依赖 SDK，不依赖宿主实现。
+
 ```
-浏览器前端（图谱展示）              智能体（豆包等，经 MCP 接入）
+浏览器前端 / 工作台               智能体（豆包等，经 MCP 接入）
         │                                │
-        │ ① /api/ontology 图谱数据       │ ① MCP 工具调用（能力匹配/编排/分配…）
+        │ REST /api/*                    │ MCP 工具调用（26 个）
         ▼                                ▼
-推理 API（api/main.py · FastAPI）◄─────── MCP Server（mcp/mcp_server.py · :9000）
-   /api/ontology /api/reason /api/entities /api/explain /api/consistency
-        │ ② 触发推理（领域适配器）
-        ▼
-通用引擎（reasoner/engine.py）
-  L1 OWL 2 RL（owlrl）：R1 属性链、R3 传递闭包
-  L2 领域适配器（domains/agent_task）：R2 复合任务委派、R4 合规冲突
-  L3 查询服务 + 推导链
-        │ ③ 加载并推理
-        ▼
-本体模型（domains/agent_task/agent_task_ontology.owl · OWL 2）
-  类层次 / 属性约束 / 推理公理 / 演示个体
+推理 API（api/main.py · FastAPI）   MCP Server（mcp/mcp_server.py · :9000）
+        └────────────── 共享同一运行态 ──────────────┘
+                     │
+        DomainManager（domains/manager.py）
+        当前领域的唯一真相源 · 热切换的落点
+          L1 本体内容重载   /api/ontology/reload
+          L2 同包代码重载   /api/domains/reload
+          L3 跨包切换       /api/domains/{name}/activate
+                     │ 构造成功才整体替换（失败保持旧领域服务）
+                     ▼
+        宿主 reasoner/：通用引擎 + G1–G4 闸门 + proof（不含领域词汇）
+                     │ 只依赖下面的 SDK
+                     ▼
+        领域插件 SDK packages/ontology-plugin-sdk
+          protocol / semantic / derivation / abox / context / cq / fakes
+                     ▲ 领域包唯一依赖
+                     ▼
+        运行态领域包 domains/<name>/（← examples/<name> 安装）
+          agent_task（默认）· fault_diag（异构）· _minimal（零复制样板）
+          本体 .owl + adapter.py + config.json + shapes/*.ttl + mcp.py
 ```
 
 > 推理器说明：HermiT（owlready2 内置）需要 Java Runtime。本 Demo 为保证 **零依赖随处可跑**，推理层改用纯 Python 的 OWL 2 RL（owlrl）+ 业务规则引擎；本体仍为标准 OWL 2 文件，可在 Protege（配 Java）中直接打开并跑 HermiT 校验。
@@ -192,6 +202,14 @@ npm run build               # 产物 frontend/app/dist
 | POST | `/api/ontology/revoke` | 撤销任务分配 `{task, agent, persist}` |
 | POST | `/api/ontology/import` | 批量导入任务个体（事务：任一校验失败整体拒绝）`{individuals, persist}` |
 
+领域管理接口（v0.6.0 起，多领域与热切换）：
+
+| 方法   | 路径                 | 功能                                                           |
+| ---- | ------------------ | ------------------------------------------------------------ |
+| GET  | `/api/domains`     | 已安装领域 + 当前领域（name / description / onto_path / capabilities / triples / mode） |
+| POST | `/api/domains/reload` | **L2 同包重载**：重读领域代码 `adapter.py` / `config.json` 并重建引擎；失败返回 400 且旧领域可用 |
+| POST | `/api/domains/{name}/activate` | **L3 跨包切换**：切到另一个已安装领域；失败一律 400 且旧领域继续服务 |
+
 在线编辑接口（v1.4.0 起，在线编辑本体定义；保存后自动重建引擎并重推理）：
 
 | 方法   | 路径                 | 功能                                                           |
@@ -210,6 +228,11 @@ npm run build               # 产物 frontend/app/dist
 | POST | `/api/types`       | 个体推理后的全部类型 `{individual}`                                   |
 | POST | `/api/property`    | 主体-属性取值列表 `{subject, property}`                              |
 | POST | `/api/infer`       | 重新执行推理，返回三元组/个体统计                                          |
+| GET  | `/api/entities/schema` | 领域自声明的实体字段形状（`ENTITY_SCHEMA`），先看它再 POST `/api/entities` |
+| POST | `/api/ontology/load` | 加载指定 OWL 到当前引擎（自定义本体 → 通用模式入口）                        |
+| GET  | `/api/ontology/materialized` | 物化后的本体（raw ∪ 推理新增）                                  |
+| GET  | `/api/ontology/source` | 当前本体的 OWL/RDF 源码                                              |
+| GET  | `/api/ontology/export` | 导出当前模型或物化后本体（Turtle / RDF/XML）                           |
 
 示例：
 
@@ -227,30 +250,50 @@ curl -s -X POST http://127.0.0.1:8000/api/individuals \
   -d '{"class_name":"Task"}'
 ```
 
-## 架构：通用引擎 + 领域适配器（运行时动态加载）
+## 架构：SDK（领域契约）→ 宿主（引擎与框架）→ 运行态领域包
 
-核心代码与本体定义**完全解耦**：
+三层职责清晰划分，**领域包只依赖 SDK，不依赖宿主实现**：
 
-- **通用引擎** `reasoner/engine.py`：加载任意 `.owl`、OWL 2 RL 推理、SPARQL / 个体 / 类 / 类型 / 属性 / 重推理，
-  不含任何领域词汇（没有 `Agent` / `Task` / `can_execute` 等）；
-- **领域适配器** `domains/`：领域语义（能力匹配 / 编排 / 分配合规 / 分类 / 图谱）**全部外置**，
-  通过 `domains/registry.py` 的约定式注册表在运行时动态加载
-  （`domains/__init__.py` 只做导出）；领域包内业务逻辑在 `domains/agent_task/adapter.py`，
-  `domains/agent_task/__init__.py` 只做导出：
+```
+领域插件 SDK   packages/ontology-plugin-sdk/
+  领域包唯一依赖；protocol（契约）/ semantic / derivation / abox / context / cq / fakes
+      ▲
+宿主          reasoner/
+  通用引擎 engine.py · 流水线闸门 pipeline_gate.py（G1–G4）· proof.py
+  {protocol,semantic,derivation,abox,plugin}.py 仅为兼容层，re-export SDK，勿新增逻辑
+      ▲
+运行态        domains/<name>/（由 examples/<name> 安装，.gitignore 忽略）
+  本体 .owl + adapter.py + config.json + derivation.json + shapes/*.ttl + mcp.py
+```
+
+- **领域包契约**（最小必需）：`__init__.py` 暴露 `NAME` / `DESCRIPTION` / `ONTO_FILE` /
+  `create_adapter(engine, config=None)`，建议加 `PLUGIN_API = "1"`；本体 `*.owl` 由 `ONTO_FILE` 指向
+  （或取包内唯一的 `.owl`）。`adapter.py` / `config.json` / `derivation.json` / `shapes/*.ttl` /
+  `mcp.py` 均可按需省略。
+- **运行时装载**：`domains/manager.py` 的 `DomainManager` 持有"当前领域"这一个唯一真相源。
+  换领域不是给全局变量重新赋值，而是**先构造新实例、成功后整体替换**（`DomainHandle` 不可变）——
+  构造期任何异常都不会动到旧领域。
+- **热切换三级**：L1 本体内容重载（`/api/ontology/reload`）· L2 同包代码重载（`/api/domains/reload`）·
+  L3 跨包切换（`/api/domains/{name}/activate`）。**改了领域 Python 代码必须用 L2**，L1 不会重读包代码。
+- **通用模式 vs 领域模式**：判据是"对外服务的引擎是否就是当前领域绑定的那个"（`in_domain_mode()`）；
+  加载自定义本体后进入 generic 模式，领域推理不可用时接口会明确提示。
+- **领域自带的东西由领域自己声明**：能力处理器 `CAPABILITY_HANDLERS`、实体字段形状 `ENTITY_SCHEMA`、
+  图谱分组 `graph_group_members` 都交给领域包声明，框架不再写死进契约——这也是异构领域
+  `fault_diag`（自定义能力 `diagnose`、三级类层次、`owl:hasValue` 推故障等级）能被接纳的前提。
+- **领域包可脱离本仓库运行**：唯一依赖 `ontology-plugin-sdk` 与 `rdflib`，配合 SDK 的 `FakeEngine`
+  即可单测，无需启动宿主：
 
 ```python
-from reasoner.engine import get_engine
-from domains import list_domains, load_domain
+from ontology_plugin_sdk import FakeEngine, PluginContext
 
-list_domains()                      # 枚举可用领域：[{"name","description","module"}, ...]
-adapter = load_domain("agent_task", get_engine())   # 按名加载适配器
-adapter.capability_match(adapter.NS["t_login_dev"]) # 领域查询
-get_engine().individuals("Task")    # 通用查询（任意本体可用）
+engine = FakeEngine(ns="http://example.org/fault_diag#")
+ctx = PluginContext.for_module(domain_module, engine)
+adapter = domain_module.create_adapter_ctx(ctx)
 ```
 
 当前默认领域 `domains/agent_task/`：领域数据按关注点分两个独立 JSON——
 `config.json`（类角色映射）、`derivation.json`（推导链文案模板 + 展开规则），
-查询服务在 `adapter.py`（R2/R4 规则），**MCP 领域工具注册在 `mcp.py`**（8 个领域工具随领域包走）。
+查询服务在 `adapter.py`（R2/R4 规则），**MCP 领域工具注册在 `mcp.py`**（9 个领域工具随领域包走）。
 **中文名标签统一来自本体 rdfs:label**（引擎 `label()` 读取，支持 URIRef 与短名），
 不再在配置中重复维护——owl 是中文名的唯一事实源。
 **属性名采用"语义名即本体短名"约定**：属性与本体同名时无需配置（`SemanticConfig.resolve()` 兜底），
@@ -290,24 +333,27 @@ ontology-agent-demo/
 │       ├── abox.py                    # ABox 事务仓库（删除/撤回/批量导入/增量落盘）
 │       ├── context.py                 # PluginContext（引擎 + 包目录 + 配置 + 原语 + ABox 工厂）
 │       ├── engine.py                  # EngineProtocol + local / resolve_ns
+│       ├── cq/                        # CQ 建模工位：出题 / 质检 / TBox 草稿（领域中立）
 │       └── fakes.py                   # FakeEngine：领域包脱离宿主做单测
 ├── reasoner/                          # 宿主：引擎与框架能力
 │   ├── engine.py                      # 通用引擎（加载/推理/SPARQL/通用查询，与本体无关）
 │   ├── pipeline_gate.py               # G1–G4 闸门（G4 形状按当前领域包解析）
-│   ├── cq/                            # CQ 出题 / 质检 / TBox 草稿工位（领域中立）
+│   ├── proof.py                       # 结构化机读证明（build_proof）
 │   └── {protocol,semantic,derivation,abox,plugin}.py   # 兼容层：re-export SDK，勿新增逻辑
 ├── domains/                           # 运行态 root（gitignore，需 domain install）
 │   ├── registry.py                    # load_domain / 契约校验 / PLUGIN_API 版本比对
 │   ├── manager.py                     # DomainManager：当前领域唯一真相源 + L1/L2/L3 切换
 │   └── installer.py                   # install / uninstall 与内容哈希
 ├── examples/                          # 随仓库分发的示例领域包（模板，不自动生效）
-│   ├── agent_task/                    # 完整业务领域（7 能力 / R2 R4 / ABox 写入 / 8 个 MCP 工具）
+│   ├── agent_task/                    # 完整业务领域（7 能力 / R2 R4 / ABox 写入 / 9 个 MCP 工具）
 │   ├── fault_diag/                    # 异构领域（诊断因果链 / 三级类层次 / 自定义能力 diagnose）
 │   └── _minimal/                      # 零复制验收物（1 类 3 个体，0 业务方法）
 ├── api/
 │   ├── main.py                        # FastAPI（领域端点走适配器 + 通用端点走引擎）
 │   └── schemas.py                     # 请求模型
-├── mcp/mcp_server.py                  # MCP Server 通用出口（--domain 动态加载领域工具 + 6 个通用工具）
+├── mcp/mcp_server.py                  # MCP Server 通用出口（--domain 动态加载领域工具）
+│   ├── policy.py                      # 受控语义策略（类/谓词白名单门禁），随领域包配置
+│   └── tool_guard.py                  # 调用护栏（预算熔断/循环拦截/缓存复用/审计留痕）
 ├── frontend/index.html                # 图谱可视化展示页
 ├── scripts/
 │   ├── build_ontology.py              # 一键重建本体（含结构自检）
@@ -318,21 +364,34 @@ ontology-agent-demo/
 │   └── guide/                         # 《本体上手指南》9 篇（MkDocs 构建在线站点）
 ├── assets/demo.png                    # README 演示截图
 ├── tests/                             # 推理 / API / 插件 / 热切换 / SDK 自动化测试（pytest）
-├── .github/workflows/                 # CI（pytest × 3.10-3.12）+ GitHub Pages
+├── .github/workflows/                 # CI（pytest × 3.10-3.12）+ 文档站自动构建
 ├── Makefile / docker-compose.yml / Dockerfile / pyproject.toml
 └── README.md
 ```
 
 ## MCP 接入（智能体直接调用）
 
-本体推理已封装为标准 MCP Server（`mcp/mcp_server.py`，内嵌引擎、复用项目本体），
-**通用出口层**：8 个领域工具随领域包走（`domains/agent_task/mcp.py` 注册，
-能力匹配/编排/分配/分类/一致性/推导链/图谱/实体）+ 6 个通用工具（SPARQL/个体/类/类型/属性/重推理）。
+本体推理已封装为标准 MCP Server（`mcp/mcp_server.py`，内嵌引擎、复用**当前领域**），
+26 个工具按来源分三组：
+
+- **领域工具 9 个**随领域包走（`domains/<name>/mcp.py` 注册）：`capability_match` / `orchestrate` /
+  `assign` / `classify` / `consistency` / `explain` / `ontology` / `status` / `entities`
+- **通用工具 12 个**引擎直接提供（任意 `.owl` 可用）：`query_sparql` / `individuals` / `classes` /
+  `types_of` / `property_values` / `infer` / `explain_proof` / `predefined_queries` /
+  `run_predefined_query` / `active_facts` / `guard_status` / `pipeline_gate`
+- **建模 / 质量工具 5 个**：`guide_tbox_draft` / `validate_tbox_draft` / `validate_shapes` /
+  `guide_cq_generation` / `validate_cqs`
+
+调用护栏在同目录 `policy.py`（语义白名单门禁）与 `tool_guard.py`（预算熔断 / 循环拦截 /
+缓存复用 / 审计留痕），均随领域包配置，未启用时逐字节向后兼容。
+**换领域时领域工具随之更换**（`--domain fault_diag` 会得到该领域的自有能力，如 `diagnose`）。
 
 ```bash
 cd ontology-agent-demo
-.venv/bin/python mcp/mcp_server.py --domain agent_task --port 9000   # 默认 agent_task；streamable-http
-.venv/bin/python mcp/mcp_server.py --transport stdio                 # stdio（本地 Client）
+.venv/bin/python mcp/mcp_server.py                                   # 默认领域；streamable-http
+.venv/bin/python mcp/mcp_server.py --domain fault_diag --port 9000    # 换领域
+.venv/bin/python mcp/mcp_server.py --watch                            # 文件监听热重载（推荐）
+.venv/bin/python mcp/mcp_server.py --transport stdio                  # stdio（本地 Client）
 ```
 
 接入豆包：侧边栏「技能 / 连接器」→ 添加 → 新建自定义连接器 → 传输类型 **HTTP** →
@@ -354,12 +413,12 @@ URL 填 `http://127.0.0.1:9000/mcp`，保存后即可在对话中直接调用。
 ```
 
 - 本地看：直接打开 `docs/guide/README.md`
-- 在线看：GitHub Pages 自动构建（仓库 Settings → Pages → Source 选 **GitHub Actions**）
+- 在线站点：由仓库 CI 工作流自动构建部署
 
 ## 开发与贡献
 
-- **测试**：`make test`（pytest，402 项，含推理规则、插件契约、热切换与 SDK 边界）；CI 在 push / PR 时对 Python 3.10–3.12 全量跑。
-- **文档**：指南用 MkDocs 构建，推送 `main` 后由 CI 自动构建并部署 GitHub Pages；本地 `make docs` 预览需 Python 3.10–3.12（当前机器 3.14 暂无 watchdog 轮子，故本地构建在 CI 上验证）。
+- **测试**：`make test`（pytest，380 项，含推理规则、插件契约、热切换与 SDK 边界）；CI 在 push / PR 时对 Python 3.10–3.12 全量跑。
+- **文档**：指南用 MkDocs 构建，推送 `main` 后由 CI 自动构建并部署文档站；本地 `make docs` 预览需 Python 3.10–3.12（当前机器 3.14 暂无 watchdog 轮子，故本地构建在 CI 上验证）。
 - **可安装包**：`pip install -e .`（pyproject.toml，依赖与 requirements.txt 一致）。领域插件 SDK 是
   同仓库的 workspace 包，`requirements.txt` 已含 `-e ./packages/ontology-plugin-sdk`，会一起装上。
 - 欢迎提 Issue / PR；新增领域见指南篇 8。

@@ -47,9 +47,9 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
 
 ## 第 3 步：认识 26 个工具
 
-服务共暴露 **26 个工具**，分「核心业务工具」与「进阶 / 作者态工具」两组。核心 14 个是接入对话最常用、也是本篇演示用到的；进阶 12 个面向本体建模、校验、守卫与证明，做"造自己的领域"（篇 8）时才会用到。
+服务共暴露 **26 个工具**，按来源分三组：**领域工具 9 个**随领域包注册（换领域这组跟着换）、**通用工具 12 个**走引擎（任意 `.owl` 可用）、**建模 / 质量工具 5 个**（TBox 草稿、SHACL 形状、CQ 质检），做"造自己的领域"（篇 8）时才会用到。
 
-**领域工具（8 个，走适配器）**
+**领域工具（9 个，随领域包注册）**
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
@@ -61,8 +61,9 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
 | `explain` | — | 最近一次查询的中文推导链（回答"为什么"） |
 | `ontology` | — | 本体结构导出（类/个体/边） |
 | `entities` | — | 实体短名清单（任务/智能体/能力/约束 + 中文标签） |
+| `status` | — | 服务与当前领域状态自检（本体、三元组数、是否就绪） |
 
-**通用工具（6 个，走引擎，任意 .owl 可用）**
+**通用工具（12 个，走引擎，任意 .owl 可用）**
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
@@ -72,25 +73,24 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
 | `types_of` | `individual` | 个体推理后的全部类型 |
 | `property_values` | `subject, property_name` | 主体-属性取值列表 |
 | `infer` | — | 重新推理 + 三元组统计 |
+| `explain_proof` | `subject, predicate, object` | 机读证明树（与 `explain` 的人读推导链互补） |
+| `predefined_queries` | — | 列出预置的 SPARQL 查询模板 |
+| `run_predefined_query` | `name` | 按名运行一条预置查询 |
+| `active_facts` | — | 推理后的「激活事实」图（raw → g 的结果） |
+| `guard_status` | — | 查看调用守卫（guard）状态 |
+| `pipeline_gate` | `ttl, abox` | 流水线闸门状态与触发 |
 
 有个小细节很贴心：`entities` 工具专门用来"帮智能体选参数"——它返回全部任务/智能体/能力/约束的短名与中文标签，智能体不确定参数时先查它，避免瞎猜短名。
 
-**进阶 / 作者态工具（12 个，完整列表以 MCP `tools/list` 返回为准）**
+**建模 / 质量工具（5 个，完整列表以 MCP `tools/list` 返回为准）**
 
 | 工具 | 说明 |
 |---|---|
-| `status` | 服务与当前领域状态自检 |
-| `active_facts` | 查看推理后的"激活事实"图（raw → g 的结果） |
-| `explain_proof` | 机读证明树（`proof`，与 `explain` 的人读推导链互补） |
-| `predefined_queries` | 列出预置的 SPARQL 查询模板 |
-| `run_predefined_query` | 按名运行一条预置查询 |
 | `guide_tbox_draft` | 引导式草拟 TBox（类 / 属性 / 公理） |
 | `validate_tbox_draft` | 校验草拟 TBox 的合法性 |
-| `validate_shapes` | 校验 SHACL Shapes |
+| `validate_shapes` | 校验 SHACL Shapes（G4 闸门按 `@domain` 哨兵从领域包解析） |
 | `guide_cq_generation` | 引导生成本体能力问题（CQ） |
 | `validate_cqs` | 校验能力问题（CQ） |
-| `guard_status` | 查看守卫（guard）状态 |
-| `pipeline_gate` | 流水线闸门状态与触发 |
 
 ## 第 4 步：对话演示完整链路
 
@@ -120,7 +120,7 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
 |---|---|---|
 | 面向 | 前端页面、脚本、任何 HTTP 客户端 | 智能体（豆包连接器等 MCP 客户端） |
 | 协议 | HTTP + JSON | MCP（JSON-RPC / SSE） |
-| 工具/端点 | 24 个端点 | 26 个工具 |
+| 工具/端点 | 29 个端点 | 26 个工具 |
 | 依赖 | 独立进程 | 内嵌引擎，不依赖 REST |
 
 两者共享**同一套引擎与领域包**——这就是篇 5（搭建本体推理服务）所讲的服务"多通道出口"：**同一种能力，按消费方选通道**。脚本和前端走 REST；智能体走 MCP。
@@ -129,7 +129,7 @@ docker compose up -d mcp    # 容器内启动 MCP Server（:9000）
 
 1. **MCP = 智能体的 USB 接口**：能力封装成标准工具，智能体自动发现、按说明调用。
 2. **一行命令启动**：`docker compose up -d mcp`，内嵌引擎零依赖；豆包侧边栏加连接器即可接入。
-3. **26 个工具**：14 核心（匹配/编排/分配/分类/一致性/解释/图谱/实体 + SPARQL 等通用）+ 12 进阶（建模/校验/守卫/证明，篇 8 用到）。
+3. **26 个工具**：9 个领域工具随领域包 + 12 个通用工具走引擎（SPARQL、个体、类、类型、属性、重推理、证明、守卫、闸门）+ 5 个建模工具（篇 8 用到）。
 4. **智能体听懂人话，本体算得准讲得清**——MCP 是两者的"合体通道"。
 
 **常见问题**
