@@ -5,6 +5,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增自定义业务规则引擎 `apply_rules`（通用 MCP 工具，`reasoner/rules.py` + 领域包 `rules.json`）：把「报销超 1 万且无发票 → 需总监审批」这类散在制度文档里的 IF-THEN 条款机器化
+  - `when` 条件模式（条件间 AND）：`{s, p, o}` 三元组模式（s 支持 `?变量`/短名常量、o 支持 `?变量` / `gte`/`lte`/`eq` 数值算子 / 常量——短名 IRI 与字面量双匹配）；`{not_exists: {…}}` 反条件（当前绑定下无任何匹配才成立）
+  - `then` 结论模板：绑定变量组装派生三元组；新派生谓词可为本体未声明的新属性——报告显式标 `declared: false`（诚实提示）
+  - **proof 依据链联动**：每条结论附 `{mode, rule, axioms, premises, conclusion}`，键级对齐 `explain_proof`（`custom_rule:*` 为三类原生推理规则之外的第四类来源标识，宿主 Agent 可用同一消费逻辑解析）；premises 按 asserted/derived 分流，`not_exists` 以 absence 留痕
+  - MVP 边界显式声明：**单步执行**（规则产物不作为其他规则的输入，天然规避规则环；多轮连锁列未来工作）、**只读推导**（派生结论不写回主图，物化基线/`diff_materialized`/`facts_at` 零影响）
+  - 规则校验 fail-fast：结构非法（缺 `then` / `when` 空 / 未知算子 / 谓词带变量）指明规则 ID 与字段；`rules.json` 缺省时诚实提示未配置（不 crash）；`rules` 参数支持内联 JSON 数组
+  - 出厂示例两规则（agent_task）：R5 复合任务高风险且无人可整体执行 → `needs_manual_review`（恰好命中 `t_feature`，含 not_exists 三条件）；R6 低风险有能力要求 → `eligible_solo_assignment`
+
 ## [0.6.0] - 2026-10-30
 
 本轮为「领域包插件化」批次：领域包从"随仓库入库的运行态"改为"可安装的插件"，加载位置与默认领域由配置决定，为后续热加载与多领域铺路。
