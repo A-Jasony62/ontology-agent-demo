@@ -341,9 +341,11 @@ def capability_match(self, task_iri, with_derivation=True) -> dict:
     return {"task_label": ..., "matches": ..., "derivation": self.last_derivation}
 ```
 
-当前 5 个查询：`capability_match`（R1/R2 能力匹配）、`orchestrate`（R3 编排）、
-`assign`（分配 + R4 冲突）、`consistency`（全量一致性）、`classify`（新增个体自动分类），
-外加 `explain`（最近推导链）与 `graph_export`（图谱数据）。
+当前 4 个业务查询：`capability_match`（R1/R2 能力匹配）、`orchestrate`（R3 编排）、
+`assign`（分配 + R4 冲突）、`consistency`（全量一致性），外加三个框架能力
+`explain`（最近推导链）、`graph_export`（图谱数据）、`create`（按领域 schema 建实体）。
+`classify` 已从契约移出——它的四个参数是「智能体任务编排」的形状，现在是
+agent_task 自己的方法（MCP 工具仍叫这个名字）。
 
 ---
 
@@ -355,7 +357,8 @@ def capability_match(self, task_iri, with_derivation=True) -> dict:
 |---|---|---|---|
 | GET | `/api/ontology` | — | 图谱数据（类/个体/边） |
 | POST | `/api/reason` | `{type: capability_match\|orchestrate\|assign, task, agent?}` | 领域查询 |
-| POST | `/api/classify` | `{name, capabilities, constraints, risk_level?}` | 新增个体并分类 |
+| POST | `/api/entities` | `{payload, persist?}` | 按领域 `ENTITY_SCHEMA` 新建实体 |
+| GET | `/api/entities/schema` | — | 当前领域的实体字段声明 |
 | POST | `/api/explain` | — | 最近一次推导链 |
 | POST | `/api/consistency` | — | 一致性 / 合规冲突 |
 

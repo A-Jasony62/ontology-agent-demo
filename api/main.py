@@ -7,8 +7,9 @@
         GET  /                 前端 Demo 页面（图谱展示）
         GET  /api/health       健康检查
         GET  /api/ontology     本体结构（图谱渲染数据）
-        POST /api/reason       结构化推理（capability_match / orchestrate / assign）
-        POST /api/classify     新增任务个体并自动分类
+        POST /api/reason       结构化推理（框架内置三种 ∪ 领域注册的处理器）
+        GET  /api/entities/schema 当前领域的实体 schema（字段 / 类型 / 必填）
+        POST /api/entities     按领域 schema 新建实体（校验 → 写图 → 推理）
         POST /api/explain      最近一次推理的推导链
         POST /api/consistency  一致性 / 合规冲突检查
     领域管理（P2：热切换，领域层端点随当前领域变化）：
@@ -61,12 +62,14 @@ from reasoner.engine import get_engine, OntologyEngine
 from reasoner.protocol import (
     capability_handlers,
     dangling_capabilities,
+    entity_schema,
     supports,
     undeclared_missing,
+    validate_entity_schema,
 )
 from domains import DomainManager, DomainContractError, DomainNotFoundError
 from .schemas import (
-    ReasonRequest, ClassifyRequest, RevokeRequest, ImportRequest,
+    ReasonRequest, EntityRequest, RevokeRequest, ImportRequest,
     SparqlRequest, IndividualsRequest, TypesRequest, PropertyRequest,
     SaveOntologyRequest,
 )
@@ -257,6 +260,9 @@ def health():
             # 实际可从 POST /api/reason 触达的类型：框架内置 ∪ 领域处理器，
             # 再按领域声明过滤。集成方据此决定调什么，不用猜。
             "reason_kinds": sorted(k for k in _reason_kinds(ADAPTER) if supports(ADAPTER, k)),
+            # 实体创建：schema 的类 + 字段名清单。完整形状看
+            # GET /api/entities/schema（这里只做"有没有、有哪些字段"的快照）
+            "entity_schema": _schema_summary(ADAPTER),
         },
         "dirty": ADAPTER.change_count > 0,
         "pending_changes": ADAPTER.change_count,
@@ -312,6 +318,25 @@ def _reason_kinds(adapter) -> dict:
     return table
 
 
+def _schema_summary(adapter) -> dict | None:
+    """实体 schema 的一句话摘要（health 用）；无声明或声明坏了都返回 None。
+
+    health 是运维探针：schema 写错已经在加载期被拒，这里只可能碰上运行期
+    手动换上的适配器，不能让探针本身因为一条坏 schema 变成 500。
+    """
+    raw = entity_schema(adapter)
+    if raw is None:
+        return None
+    try:
+        schema = validate_entity_schema(raw)
+    except ValueError:
+        return None
+    return {
+        "class": schema["class"],
+        "fields": [f["name"] for f in schema["fields"]],
+    }
+
+
 @app.post("/api/reason")
 def reason(req: ReasonRequest):
     _require_default_ontology()
@@ -334,12 +359,34 @@ def reason(req: ReasonRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/classify")
-def classify(req: ClassifyRequest):
+@app.get("/api/entities/schema")
+def entity_schema_endpoint():
+    """当前领域的实体 schema（字段名 / 类型 / 是否必填）。
+
+    集成方据此构造 payload，不必读源码或猜字段——`/api/entities` 的
+    校验规则就是这里返回的东西。
+    """
     _require_default_ontology()
-    _require_capability("classify")
-    return ADAPTER.classify(req.name, req.capabilities, req.constraints,
-                            req.risk_level, persist=req.persist)
+    _require_capability("create")
+    try:
+        return validate_entity_schema(entity_schema(ADAPTER))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/entities")
+def create_entity_endpoint(req: EntityRequest):
+    """按当前领域的 ENTITY_SCHEMA 新建实体（校验 → 写图 → 推理）。
+
+    与 `/api/reason` 一样，领域的 ValueError 一律转 400：payload 不合
+    领域声明的形状属于客户端错误。
+    """
+    _require_default_ontology()
+    _require_capability("create")
+    try:
+        return ADAPTER.create(req.payload, persist=req.persist)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/explain")

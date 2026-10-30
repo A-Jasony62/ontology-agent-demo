@@ -27,6 +27,7 @@ from ontology_plugin_sdk import (
     load_derivation_config,
     load_domain_config,
     local,
+    normalize_entity_payload,
 )
 
 NAME = "agent_task"
@@ -44,7 +45,25 @@ CAPABILITIES = (
     "consistency",
     "explain",
     "graph_export",
+    "create",
 )
+
+# 实体 schema（框架的通用创建入口 /api/entities 按它校验 payload）。
+# 字段名是**本领域的**：框架不认识 capabilities / risk_level，只按这份声明
+# 校验、写图、推理。换一个领域的 schema 形状可以完全不同，框架代码不动。
+ENTITY_SCHEMA = {
+    "class": "simple_task_class",
+    "id_field": "name",
+    "fields": [
+        {"name": "name", "kind": "literal", "type": "str"},
+        {"name": "capabilities", "property": "requires_capability",
+         "kind": "node", "many": True},
+        {"name": "constraints", "property": "requires_constraint",
+         "kind": "node", "many": True},
+        {"name": "risk_level", "property": "has_risk_level",
+         "kind": "literal", "type": "int"},
+    ],
+}
 
 # 领域数据（独立 JSON 文件，通用加载器来自 reasoner.semantic）
 _DIR = os.path.dirname(os.path.abspath(__file__))
@@ -85,6 +104,7 @@ class AgentTaskAdapter:
         self.c = config
         self.NAME = NAME                       # 领域标识（health / 日志 / 运行时发现）
         self.CAPABILITIES = CAPABILITIES       # 能力声明（端点门禁读实例属性）
+        self.ENTITY_SCHEMA = ENTITY_SCHEMA     # 实体形状（框架按它校验 /api/entities）
         # /api/health 的推理器描述：R2/R4 是本领域的规则编号，框架不知道，
         # 由领域自己声明（异构领域没有这两条规则，不该被框架统一贴上）
         self.REASONER_SUMMARY = "OWL 2 RL (owlrl) + 业务规则 R2/R4"
@@ -390,6 +410,22 @@ class AgentTaskAdapter:
             "notes": info,
             "derivation": self.last_derivation,
         }
+
+    def create(self, payload: dict, persist: bool = False) -> dict:
+        """通用实体创建入口（`POST /api/entities`）。
+
+        分工：**校验交给框架**（按 ENTITY_SCHEMA 验字段名 / 必填 / 类型），
+        **语义留在这里**（投影到 classify，保留分类规则与匹配结果）。
+        这样第三个领域可以声明完全不同的字段，而端点代码一行都不用改。
+        """
+        values = normalize_entity_payload(self, payload)
+        return self.classify(
+            values["name"],
+            values.get("capabilities", []),
+            values.get("constraints", []),
+            values.get("risk_level", 3),
+            persist=persist,
+        )
 
     def classify(self, name: str, capabilities: list, constraints: list, risk_level: int = 3, persist: bool = False) -> dict:
         """新增任务个体并自动分类（引擎推理 + 分类规则）。

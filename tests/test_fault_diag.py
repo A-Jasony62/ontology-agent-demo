@@ -65,7 +65,9 @@ def test_adapter_builds_without_any_task_orchestration_method(fd):
     from reasoner.protocol import missing_methods
 
     missing = set(missing_methods(fd.adapter))
-    assert missing == {"capability_match", "orchestrate", "assign", "classify"}
+    # create 由 AdapterBase 提供默认实现，所以它不出现在缺失清单里——
+    # "任何领域都能建实体"正是这次把 classify 换成 create 想要的效果
+    assert missing == {"capability_match", "orchestrate", "assign"}
     # 缺失但不报错，因为它们被 CAPABILITIES 显式排除
     assert "diagnose" in fd.adapter.CAPABILITIES
 
@@ -388,3 +390,60 @@ def test_domain_installable_and_activatable(tmp_path):
     assert manager.in_domain_mode() is True
     result = manager.adapter.diagnose("pump_01_bearing")
     assert result["most_likely"] == "bearing_wear"
+
+
+# ---------------- 通用实体创建（ENTITY_SCHEMA） ----------------
+
+
+def test_entity_schema_is_domain_shaped(fd_api):
+    """schema 里全是本领域的词，框架不认识其中任何一个。"""
+    resp = fd_api.get("/api/entities/schema")
+    assert resp.status_code == 200
+    body = resp.json()
+    names = {f["name"] for f in body["fields"]}
+    assert names == {"name", "label", "severity", "remedies"}
+    assert body["id_field"] == "name"
+
+
+def test_create_entity_infers_critical_fault(fd_api):
+    """severity=4 建出来的故障被**推理**成 CriticalFault，领域代码零参与。
+
+    这是通用 create 最值得看的一点：框架只按 schema 写三元组，定级由本体
+    里的 `CriticalFault ≡ FaultMode ⊓ (hasSeverity value 4)` 交给 OWL RL。
+    若哪天有人把 types 换成"比较 severity 数值"，这条用例仍会绿——所以
+    断言的是类型清单，而 types 来自图上的 rdf:type。
+    """
+    resp = fd_api.post("/api/entities", json={"payload": {
+        "name": "f_demo_critical", "label": "演示：润滑失效过热", "severity": 4,
+        "remedies": ["add_lubricant"],
+    }})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["individual"] == "f_demo_critical"
+    assert body["class"] == "FaultMode"
+    assert "CriticalFault" in body["types"]
+    # 匿名类不得混进类型清单（_local 会把 BNode 变成 N<hex>）
+    assert all(not t.startswith("N") or len(t) < 10 for t in body["types"])
+
+
+def test_create_entity_below_threshold_is_not_critical(fd_api):
+    resp = fd_api.post("/api/entities", json={"payload": {
+        "name": "f_demo_minor", "severity": 2,
+    }})
+    assert resp.status_code == 200, resp.text
+    assert "CriticalFault" not in resp.json()["types"]
+
+
+def test_create_entity_rejects_payload_outside_schema(fd_api):
+    """payload 不在领域声明的形状里 → 400，而不是静默建个空个体。"""
+    resp = fd_api.post("/api/entities", json={"payload": {
+        "name": "f_bad", "capabilities": ["Coding"],
+    }})
+    assert resp.status_code == 400
+    assert "capabilities" in resp.json()["detail"]
+
+
+def test_create_entity_requires_declared_capability(fd_api):
+    """未声明 CAPABILITIES 的端点行为保持一致：400「未声明能力」。"""
+    resp = fd_api.post("/api/reason", json={"type": "capability_match", "task": "pump_01"})
+    assert resp.status_code == 400

@@ -67,13 +67,30 @@ def test_reason_assign_conflict():
     assert r.json()["conflict"] is not None
 
 
-def test_classify():
-    r = client.post("/api/classify", json={
+def test_create_entity():
+    """通用创建入口：只把 payload 交给领域，字段名由 ENTITY_SCHEMA 决定。"""
+    r = client.post("/api/entities", json={"payload": {
         "name": "t_api_classify", "capabilities": ["Coding"],
         "constraints": ["ComplianceRequirement"], "risk_level": 5,
-    })
+    }})
     assert r.status_code == 200
     assert {"ComplianceTask", "HighRiskTask"} <= {t["class"] for t in r.json()["inferred_types"]}
+
+
+def test_create_entity_rejects_unknown_field():
+    """未知字段拒绝而不是忽略：拼错字段名能让调用方以为生效了。"""
+    r = client.post("/api/entities", json={"payload": {"name": "t_bad", "riskLevel": 5}})
+    assert r.status_code == 400
+    assert "riskLevel" in r.json()["detail"]
+
+
+def test_entity_schema_endpoint():
+    """schema 端点给出可用字段——集成方不必读源码。"""
+    r = client.get("/api/entities/schema")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["class"]
+    assert {f["name"] for f in body["fields"]} >= {"name", "risk_level"}
 
 
 def test_explain():

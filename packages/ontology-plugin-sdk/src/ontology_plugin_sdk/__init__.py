@@ -9,7 +9,8 @@
 它没有 `DEFAULT_NS`、没有 `ONTO_PATH`、没有领域名。
 
 分层：
-    protocol.py   适配器契约：AdapterBase / 方法清单 / 缺失判定（三态）
+    protocol.py   适配器契约：AdapterBase / 方法清单 / 缺失判定（三态）/
+                  实体 schema 与通用 create
     semantic.py   语义配置容器与 JSON 加载（纯 dataclass）
     derivation.py 推导链规则解释器（纯函数）
     abox.py       ABox 事务仓库（事务与落盘由它管，业务谓词由领域给）
@@ -38,17 +39,22 @@ from .protocol import (
     BUSINESS_METHODS,
     CAPABILITIES,
     CAPABILITY_HANDLERS_ATTR,
+    ENTITY_SCHEMA_ATTR,
     FRAMEWORK_METHODS,
     REQUIRED_METHODS,
     AdapterBase,
     AdapterProtocol,
     capability_handlers,
+    create_entity,
     dangling_capabilities,
     default_explain,
     default_graph_export,
+    entity_schema,
     missing_methods,
+    normalize_entity_payload,
     supports,
     undeclared_missing,
+    validate_entity_schema,
 )
 from .semantic import (
     DerivationConfig,
@@ -76,13 +82,18 @@ __all__ = [
     "REQUIRED_METHODS",
     "CAPABILITIES",
     "CAPABILITY_HANDLERS_ATTR",
+    "ENTITY_SCHEMA_ATTR",
     "capability_handlers",
+    "create_entity",
     "dangling_capabilities",
     "default_explain",
     "default_graph_export",
+    "entity_schema",
     "missing_methods",
+    "normalize_entity_payload",
     "supports",
     "undeclared_missing",
+    "validate_entity_schema",
     # 引擎
     "EngineProtocol",
     "FakeEngine",
