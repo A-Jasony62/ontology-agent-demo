@@ -240,7 +240,7 @@ def health():
         "ontology": os.path.basename(ENGINE.onto_path),
         "version": _ontology_version(),
         "loaded_at": ENGINE_LOADED_AT,
-        "reasoner": "OWL 2 RL (owlrl) + 业务规则 R2/R4",
+        "reasoner": getattr(ADAPTER, "REASONER_SUMMARY", None) or "OWL 2 RL (owlrl)",
         "domain": ADAPTER.NAME,
         # P0-0 契约探针：空列表 = 适配器实现了全部框架要求的方法
         "contract": {

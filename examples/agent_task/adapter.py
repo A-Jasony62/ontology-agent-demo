@@ -84,6 +84,9 @@ class AgentTaskAdapter:
         self.c = config
         self.NAME = NAME                       # 领域标识（health / 日志 / 运行时发现）
         self.CAPABILITIES = CAPABILITIES       # 能力声明（端点门禁读实例属性）
+        # /api/health 的推理器描述：R2/R4 是本领域的规则编号，框架不知道，
+        # 由领域自己声明（异构领域没有这两条规则，不该被框架统一贴上）
+        self.REASONER_SUMMARY = "OWL 2 RL (owlrl) + 业务规则 R2/R4"
         self.NS = engine.NS                     # 供 explain / 外部构造 URIRef
         self.label = engine.label               # 供 explain / 外部取中文名（owl rdfs:label）
         self.templates = dict(TEMPLATES)        # 推导链文案模板

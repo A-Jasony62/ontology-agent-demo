@@ -328,3 +328,20 @@ def test_api_has_no_hardcoded_domain_name():
     }
     assert "agent_task" not in literals, "api/main.py 出现硬编码领域名"
     assert "minimal" not in literals
+
+
+def test_api_health_reasoner_summary_is_domain_declared():
+    """health 的推理器描述不得含领域规则编号。
+
+    "业务规则 R2/R4" 是 agent_task 的规则编号。此前它被写死在 health 里，
+    于是任何异构领域（没有 R2/R4）的运维探针都会报告两条它根本没有的规则。
+    改为领域声明 REASONER_SUMMARY：框架只说推理器，业务规则由领域自述。
+    """
+    src = open(os.path.join(REPO, "api", "main.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+    literals = {
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    }
+    assert not [x for x in literals if "R2/R4" in x or "R2、R4" in x], \
+        "api/main.py 仍写死了领域规则编号 R2/R4"

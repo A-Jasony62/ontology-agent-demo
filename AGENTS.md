@@ -24,7 +24,7 @@ bash scripts/start.sh      # venv + deps + API + open browser
 - The Makefile hardcodes `.venv/bin/*`; run commands from the repo root. Backend tests need no running server or network.
 - Single backend test: `.venv/bin/python -m pytest tests/test_reasoning.py -k r1 -q`.
 - Frontend (from `frontend/app/`): `npm ci`, `npm run typecheck`, `npm run test`, `npm run build` (build includes typecheck). Single vitest file: `npx vitest run src/store/editorStore.test.ts`.
-- Current suites: 322 backend tests, 68 frontend tests. Counts in README/CONTRIBUTING are stale; trust `pytest`/`vitest` output.
+- Current suites: 342 backend tests, 68 frontend tests. Counts in README/CONTRIBUTING are stale; trust `pytest`/`vitest` output.
 - No backend linter/formatter/typechecker is configured; do not invent one. CI is pytest on Python 3.10–3.12 plus a Node 20 frontend job. The local `.venv` is Python 3.14; `make docs` cannot install mkdocs there (no watchdog wheel), so doc builds are verified in CI on 3.12.
 - `scripts/query.py` is HTTP-first with `--local` fallback; `scripts/query.py` and `scripts/ontologyctl.py` read `DOUBAO_API_BASE` (default `http://127.0.0.1:8000`).
 

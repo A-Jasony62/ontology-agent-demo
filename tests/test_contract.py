@@ -11,7 +11,7 @@ import os
 import sys
 
 import pytest
-from rdflib import Graph, Literal, Namespace, OWL, RDF, RDFS, URIRef
+from rdflib import BNode, Graph, Literal, Namespace, OWL, RDF, RDFS, URIRef
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -181,6 +181,10 @@ class _FakeEngine:
 
 
 def _term(value):
+    # BNode 必须在 str 判断之前返回：rdflib.BNode 继承自 str，
+    # 落进下面那个分支会被转成 Literal，匿名节点就不再是匿名节点了
+    if isinstance(value, BNode):
+        return value
     if isinstance(value, str) and value.startswith("http"):
         return URIRef(value)
     if isinstance(value, str):
@@ -279,3 +283,72 @@ def test_adapter_can_override_defaults():
             return {"classes": [], "individuals": [], "edges": [], "custom": True}
 
     assert A().graph_export()["custom"] is True
+
+
+def _adapter_with(engine, top=("Widget",)):
+    """用给定引擎装配一个最小适配器（只测默认实现，不测业务）。"""
+    from reasoner.semantic import SemanticConfig
+
+    class A(AdapterBase):
+        CAPABILITIES = ("capability_match",)
+
+        def __init__(self):
+            self.engine = engine
+            self.c = SemanticConfig(
+                top_classes=list(top), hidden_label_classes=[], graph_groups={},
+            )
+
+        def capability_match(self, *a, **k):
+            return {}
+
+    return A()
+
+
+def test_default_graph_export_skips_anonymous_subclass():
+    """匿名类不得作为类层次的一层出现。
+
+    owl:equivalentClass 在 OWL RL 推理后会拆成两条 subClassOf，匿名端点
+    （owl:Restriction）于是作为主语进入 subjects(subClassOf, cls)。
+    若不过滤 BNode，图谱里会冒出 `N34ea94cb…` 这种名字的"类"——
+    这是 examples/fault_diag 的 CriticalFault（owl:hasValue 定义）照出来的，
+    agent_task 与 _minimal 都没有匿名类，所以一直没暴露。
+    """
+    anon = BNode()
+    engine = _FakeEngine([
+        (f"{T}Widget", RDF.type, f"{T}Thing"),
+        (f"{T}Widget", RDFS.label, "部件"),
+        (anon, RDFS.subClassOf, f"{T}Widget"),        # 等价类拆出的匿名子类
+        (f"{T}Widget", OWL.equivalentClass, anon),
+    ])
+
+    names = [c["name"] for c in _adapter_with(engine).graph_export()["classes"]]
+    assert names == ["Widget"]
+
+
+def test_default_graph_export_nests_multi_level_hierarchy():
+    """多级类层次的 parent 必须指向直接父类。
+
+    OWL RL 会把 subClassOf 做成传递闭包：Widget 下面能同时查到 Gadget 和
+    SubGadget（因为 SubGadget ⊑ Gadget ⊑ Widget 被推出 SubGadget ⊑ Widget）。
+    默认实现若把 subjects 的结果全部当作"子类"，三级层次就会被压平——
+    SubGadget 的 parent 写成 Widget。同时只展开两代还会让第三级整个消失。
+    agent_task 的类层次只有一级，这个洞由 fault_diag 的
+    Pump ⊑ Equipment ⊑ Asset 照出。
+    """
+    engine = _FakeEngine([
+        (f"{T}Widget", RDFS.label, "部件"),
+        (f"{T}Gadget", RDFS.subClassOf, f"{T}Widget"),
+        (f"{T}Gadget", RDFS.label, "小装置"),
+        (f"{T}SubGadget", RDFS.subClassOf, f"{T}Gadget"),
+        (f"{T}SubGadget", RDFS.label, "子装置"),
+        # 推理闭包会补出这条（这里手写以模拟推理后的图）
+        (f"{T}SubGadget", RDFS.subClassOf, f"{T}Widget"),
+        # 物化噪音，一并验证不干扰层级判断
+        (f"{T}Widget", RDFS.subClassOf, f"{T}Widget"),
+        (f"{T}Nothing", RDFS.subClassOf, f"{T}Widget"),
+    ])
+
+    parents = {c["name"]: c["parent"]
+               for c in _adapter_with(engine).graph_export()["classes"]}
+    assert parents == {"Widget": None, "Gadget": "Widget", "SubGadget": "Gadget"}
+

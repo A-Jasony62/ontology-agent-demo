@@ -162,6 +162,62 @@ def _local(iri: Any) -> str:
     return text.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
 
 
+def _has_named_between(g: Any, sub: Any, top: Any) -> bool:
+    """`sub` 与 `top` 之间是否还存在具名中间类（即 sub 不是 top 的直接子类）。
+
+    推理闭包里 subClassOf 已传递展开，所以只看 sub 的父类里有没有
+    "自身仍是 top 后代"的那一个：有则 sub 应挂在那个父类下面。
+    匿名中间类不算——它上不了类层次，跳过它才能把层次挂回具名类。
+    """
+    for mid in g.objects(sub, RDFS.subClassOf):
+        if mid == sub or mid == top or not isinstance(mid, URIRef):
+            continue
+        if (mid, RDFS.subClassOf, top) in g:
+            return True
+    return False
+
+
+def _descendants(g: Any, cls: Any, name: str, hidden: set, label) -> list[dict]:
+    """递归收集 cls 之下的具名子类，parent 指向**直接**父类。
+
+    三件事在推理图上必须显式处理，否则真实本体一上来就出错（都由
+    examples/fault_diag 的三级类层次照出）：
+
+      1. 不是具名 URI 的主语不是类层次的一层。owl:equivalentClass 在 RL
+         推理后拆成两条 subClassOf，匿名端点（owl:Restriction）会作为主语
+         冒出来，_local() 只能给出 N<hex> 这种名字。
+         **判据必须用 `isinstance(x, URIRef)` 而不是 `isinstance(x, BNode)`：
+         rdflib 的 BNode 继承自 str**，任何"先按 str 兜底"的转换都会把
+         BNode 变成 Literal，那时 isinstance(x, BNode) 恒为假，过滤形同虚设。
+      2. subClassOf 在闭包里已传递展开，subjects(subClassOf, cls) 拿到的是
+         全部后代而非直接子类；直接拿来用会把多级层次压平到顶层之下。
+      3. 只展开两代（top + 直接子类）会丢掉第三级；递归才能表达完整层次。
+         环靠 seen 截断（等价类可以造环）。
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def walk(parent_cls, parent_name: str) -> None:
+        for sub in sorted(g.subjects(RDFS.subClassOf, parent_cls), key=str):
+            if not isinstance(sub, URIRef):      # 匿名类 / 字面量：不是类
+                continue
+            sub_name = _local(sub)
+            # 自反边（X ⊑ X）、owl:Nothing ⊑ X、领域声明隐藏的子类
+            if sub_name in hidden or sub_name == parent_name or sub_name in seen:
+                continue
+            if sub_name == "Nothing":
+                continue
+            # 只挂直接子类：若 sub 与 parent 之间还有具名中间类，交给那一层
+            if _has_named_between(g, sub, parent_cls):
+                continue
+            seen.add(sub_name)
+            out.append({"name": sub_name, "label": label(sub), "parent": parent_name})
+            walk(sub, sub_name)
+
+    walk(cls, name)
+    return out
+
+
 def default_explain(adapter: Any) -> dict:
     """默认的推导链出口：读适配器自己记录的 last_query_kind / last_derivation。
 
@@ -197,13 +253,7 @@ def default_graph_export(adapter: Any) -> dict:
     for tc in top:
         cls = NS[tc]
         classes.append({"name": tc, "label": engine.label(cls), "parent": None})
-        for sub in sorted(engine.g.subjects(RDFS.subClassOf, cls), key=str):
-            name = _local(sub)
-            # 推理物化会补出自反边（X ⊑ X）与 owl:Nothing ⊑ X，两者都不是「子类」，
-            # 拿假图做单元测试看不出来——是 _minimal 这类真实小本体把它们照出来的
-            if name in hidden or name == tc or name == "Nothing":
-                continue
-            classes.append({"name": name, "label": engine.label(sub), "parent": tc})
+        classes.extend(_descendants(engine.g, cls, tc, hidden, engine.label))
 
     individuals: list[dict] = []
     for group, class_key in (cfg.get("graph_groups", {}) or {}).items():
@@ -260,6 +310,12 @@ class AdapterBase:
 
     NAME = ""
     CAPABILITIES: tuple[str, ...] | None = None     # None = 全量能力
+
+    # /api/health 的推理器描述。框架只知道推理器本身；"业务规则 R2/R4"
+    # 这类编号是领域词汇，由领域自己覆盖——否则异构领域（没有 R2/R4）
+    # 的探针输出会撒谎。
+    REASONER_SUMMARY = "OWL 2 RL (owlrl)"
+
     last_query_kind: str | None = None
     last_derivation: list = []
 
