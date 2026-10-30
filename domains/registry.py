@@ -200,7 +200,38 @@ def load_domain_module(
 # ---------------------------------------------------------------- 契约与工厂
 
 
+def _api_major(value) -> str:
+    return str(value).strip().split(".")[0]
+
+
+def _validate_api_version(name: str, module: ModuleType) -> None:
+    """领域包声明的 `PLUGIN_API` 主版本必须与当前 SDK 兼容（P4）。
+
+    三态，与 `CAPABILITIES` 的处理方式同构：
+      - 未声明 → 视为 "1"。P0–P3 的领域包都没写这一行，加了校验就让它们
+        启动失败是不可接受的——兼容性不能靠"补一行声明"来假装达成；
+      - 声明 "1" / "1.x" → 通过；
+      - 声明其它主版本 → 拒绝。
+
+    为什么必须拒绝而不是告警降级：主版本不同意味着签名可能已经变了，
+    继续加载只会在某个请求进来时以 AttributeError / TypeError 暴露，
+    那时离"版本不匹配"这个根因已经很远，而且现场是生产流量。
+    """
+    from ontology_plugin_sdk import PLUGIN_API, __version__
+
+    declared = getattr(module, "PLUGIN_API", None)
+    if declared is None:
+        return
+    if _api_major(declared) != _api_major(PLUGIN_API):
+        raise DomainContractError(
+            f"领域包 {name!r} 声明 PLUGIN_API={declared!r}，"
+            f"与当前 SDK（{PLUGIN_API}，ontology-plugin-sdk {__version__}）"
+            f"主版本不兼容；请升级领域包或退回匹配的 SDK 版本。"
+        )
+
+
 def _validate_contract(name: str, module: ModuleType) -> None:
+    _validate_api_version(name, module)
     if not callable(getattr(module, "create_adapter", None)) and not callable(
         getattr(module, "create_adapter_ctx", None)
     ):
@@ -229,7 +260,9 @@ def load_domain(name: str, engine, config=None, *, settings: DomainConfig | None
     _validate_contract(name, module)
     factory = getattr(module, "create_adapter_ctx", None)
     if callable(factory):
-        from reasoner.plugin import PluginContext   # 延迟导入：见文件头说明
+        # 从 SDK 取上下文，而不是绕 reasoner.plugin：后者现在只是兼容 shim，
+        # 宿主自己再走 shim 没有意义，且会触发 reasoner/__init__ 的引导期副作用。
+        from ontology_plugin_sdk import PluginContext
 
         ctx = PluginContext.for_module(module, engine, config)
         adapter = factory(ctx)
@@ -240,7 +273,7 @@ def load_domain(name: str, engine, config=None, *, settings: DomainConfig | None
 
 
 def _validate_adapter(name: str, adapter) -> None:
-    from reasoner.protocol import undeclared_missing   # 延迟导入：见文件头说明
+    from ontology_plugin_sdk import undeclared_missing
 
     missing = undeclared_missing(adapter)
     if not missing:
@@ -253,7 +286,7 @@ def _validate_adapter(name: str, adapter) -> None:
     )
     raise DomainContractError(
         f"领域包 {name!r} 的适配器未满足契约：缺 {', '.join(missing)}（{hint}）。"
-        f"契约见 reasoner/protocol.py；只想实现部分能力时，用 CAPABILITIES "
+        f"契约见 ontology_plugin_sdk.protocol；只想实现部分能力时，用 CAPABILITIES "
         f"把不实现的能力排除，或在 AdapterBase 上继承框架默认实现。"
     )
 

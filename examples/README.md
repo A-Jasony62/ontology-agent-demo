@@ -35,7 +35,7 @@ python scripts/ontologyctl.py domain install --from ./examples/agent_task
 
 | 文件 | 必需 | 作用 |
 |---|---|---|
-| `__init__.py` | 是 | 暴露 `NAME` / `DESCRIPTION` / `ONTO_FILE` / `create_adapter`（或 `create_adapter_ctx`） |
+| `__init__.py` | 是 | 暴露 `NAME` / `DESCRIPTION` / `ONTO_FILE` / `create_adapter`（或 `create_adapter_ctx`）；建议加 `PLUGIN_API = "1"` |
 | `*.owl` | 是 | 本体定义（文件名由 `ONTO_FILE` 指向，或包内唯一的 `.owl`） |
 | `config.json` | 否 | 语义配置（类角色映射、图谱分组） |
 | `derivation.json` | 否 | 推导链展示模板 |
@@ -43,4 +43,23 @@ python scripts/ontologyctl.py domain install --from ./examples/agent_task
 | `shapes/*.ttl` | 否 | SHACL 形状（G4 闸门按 `@domain` 哨兵从包内解析） |
 | `mcp.py` | 否 | 该领域的 MCP 工具注册器 |
 
-契约细节见 `reasoner/protocol.py`，扩展步骤见 `docs/guide/08-扩展新领域.md`。
+契约细节见 `packages/ontology-plugin-sdk/src/ontology_plugin_sdk/protocol.py`，
+扩展步骤见 `docs/guide/08-扩展新领域.md`。
+
+## 领域包可以脱离本仓库运行
+
+领域包的唯一依赖是 `ontology-plugin-sdk`（本仓库的 workspace 包）与 `rdflib`。
+把 `fault_diag/` 整个拷到仓库外，只要 SDK 在 `sys.path` 上就能加载：
+
+```python
+from ontology_plugin_sdk import FakeEngine, PluginContext
+
+engine = FakeEngine(ns="http://example.org/fault_diag#")
+ctx = PluginContext.for_module(domain_module, engine)
+adapter = domain_module.create_adapter_ctx(ctx)
+```
+
+这是**有测试守着**的性质，不是愿景：`tests/test_sdk.py::test_domain_package_runs_outside_repo`
+会把 SDK 与领域包都复制到临时目录，摘掉所有仓库源码路径后再起一个子进程 import，
+并断言进程里没有任何 `reasoner.*` / `domains.*` / `api.*` 模块。谁把宿主的东西偷偷
+import 进领域包或 SDK，这条就会红。

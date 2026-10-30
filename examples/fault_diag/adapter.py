@@ -25,7 +25,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from reasoner.plugin import (
+# 只从领域插件 SDK 导入：领域包必须能脱离主仓库（连 reasoner.* 一起）独立存在。
+# 这条边界由 tests/test_plugin.py 的 AST 扫描守着，不是口头约定。
+from ontology_plugin_sdk import (
     AdapterBase,
     PluginContext,
     load_derivation_config,

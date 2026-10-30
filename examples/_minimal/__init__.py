@@ -21,9 +21,10 @@ CAPABILITIES 只声明 graph_export，其它能力（capability_match 等）明�
 作为新领域的起手模板时，把目录复制成 `my_domain/`（去掉下划线）即可。
 """
 
-from reasoner.plugin import AdapterBase, PluginContext
+from ontology_plugin_sdk import AdapterBase, PluginContext
 
 NAME = "minimal"
+PLUGIN_API = "1"        # 按哪一版领域插件 API 编写（不写视为 "1"）
 DESCRIPTION = "最小领域：1 个类 + 3 个个体 + 0 个业务方法（图谱导出用框架默认实现）"
 ONTO_FILE = "minimal.owl"
 
@@ -56,7 +57,7 @@ def create_adapter(engine, config=None):
     """兼容工厂：不给 ctx 时用包内默认配置（与 ctx 版同一份 config.json）。"""
     import os
 
-    from reasoner.plugin import load_domain_config
+    from ontology_plugin_sdk import load_domain_config
 
     if config is None:
         here = os.path.dirname(os.path.abspath(__file__))

@@ -23,6 +23,27 @@ from datetime import date
 from rdflib import Graph, Namespace, URIRef, Literal, BNode, RDF, RDFS, OWL
 import owlrl
 
+# 两个纯函数来自领域插件 SDK：领域包的 AboxStore 也要用它们，而 SDK 不能
+# 反向依赖宿主模块（那会让"领域可脱离主仓库"这件事立刻不成立）。
+try:
+    from ontology_plugin_sdk.engine import local as _sdk_local
+    from ontology_plugin_sdk.engine import resolve_ns as _sdk_resolve_ns
+except ModuleNotFoundError as exc:
+    # SDK 是本仓库内的 workspace 包（packages/ontology-plugin-sdk），
+    # 不发布到 PyPI，所以它不在 pip 的默认搜索范围里。裸的
+    # 「No module named 'ontology_plugin_sdk'」看不出该做什么——这里换成
+    # 可直接照抄的命令。只在**确实是 SDK 缺失**时改写，SDK 内部自己缺
+    # 依赖（如 rdflib）时原样抛出，不要替它背锅。
+    if exc.name != "ontology_plugin_sdk":
+        raise
+    raise ModuleNotFoundError(
+        "缺少领域插件 SDK（ontology_plugin_sdk）。它是本仓库的 workspace 包，"
+        "不随 pip 默认索引提供，需要显式安装：\n\n"
+        "    pip install -r requirements.txt            # 已含 -e ./packages/ontology-plugin-sdk\n"
+        "或单独安装：\n"
+        "    pip install -e ./packages/ontology-plugin-sdk\n"
+    ) from exc
+
 _LEGACY_ONTO_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "domains", "agent_task", "agent_task_ontology.owl")
 )
@@ -50,92 +71,26 @@ DEFAULT_NS = "http://demo.example.org/agent-task-ontology#"
 NS = Namespace(DEFAULT_NS)  # 默认本体命名空间（兼容旧引用；实例请用 self.NS）
 
 
-def local(iri) -> str:
-    """取 IRI 的短名（最后一个 # 或 / 之后）。"""
-    s = str(iri)
-    return s.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
-
-
-# 标准词汇命名空间（自动推导默认 NS 时排除；同时覆盖带 '#' 与无 '#' 写法）
-_RESERVED_NS = {
-    "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-    "http://www.w3.org/1999/02/22-rdf-syntax-ns",
-    "http://www.w3.org/2000/01/rdf-schema#",
-    "http://www.w3.org/2000/01/rdf-schema",
-    "http://www.w3.org/2002/07/owl#",
-    "http://www.w3.org/2002/07/owl",
-    "http://www.w3.org/2001/XMLSchema#",
-    "http://www.w3.org/2001/XMLSchema",
-    "http://www.w3.org/XML/1998/namespace#",
-    "http://www.w3.org/XML/1998/namespace",
-}
+# IRI 短名：实现已迁至 ontology_plugin_sdk.engine（领域包的 AboxStore 也要用，
+# 而 SDK 不能反向依赖宿主）。这里保留同名符号，历史调用点无需改动。
+local = _sdk_local
 
 
 def _resolve_ns(onto_path: str, g: "Graph", use_xml_base: bool = True) -> str:
     """从本体自动推导默认命名空间（engine 的短名查询依赖它）。
 
-    优先级：
-      1. RDF/XML 根元素的 xml:base（本体作者的显式声明，追加 '#'），
-         仅当图中确有以该前缀开头的术语时采用（避免误导）；
-         仅单文件模式启用（多文件时文件头无全局意义）；
-      2. 断言图中最高频的 IRI 前缀——'#' 分隔优先，无 '#' 时取最后一个
-         '/' 分隔（排除 rdf/rdfs/owl/xsd 标准词汇）；频率并列取字典序最小者；
-      3. DEFAULT_NS 兜底（保持旧行为）。
+    实现已迁至 ontology_plugin_sdk.engine.resolve_ns——领域包与框架子模块
+    都要用，而 SDK 不能反向依赖宿主模块。
 
-    在原始断言图（raw，未推理）上统计，避免推理产物干扰。
+    唯一交给宿主的是**兜底值**：推导不出命名空间时该返回什么，是应用级的
+    决定（这里是 DEFAULT_NS），不是公共契约的一部分。SDK 因此把它做成参数，
+    而不是在包里焊一个常量。
     """
-    import xml.etree.ElementTree as ET
-
-    # 1) xml:base 显式声明（仅单文件模式）
-    #    iterparse 只读到根元素即停止，避免与 rdflib 解析重复全量解析整份 XML
-    #    （rdflib 图内不保留 xml:base 信息，只能从文件头读取）。
-    if use_xml_base:
-        try:
-            base = None
-            for _event, elem in ET.iterparse(onto_path, events=("start",)):
-                base = elem.attrib.get("{http://www.w3.org/XML/1998/namespace}base")
-                break                       # 根元素即含 xml:base，无需解析完整文件
-            if base:
-                candidate = base if base.endswith("#") else base + "#"
-                for term in g.subjects():
-                    if isinstance(term, URIRef) and str(term).startswith(candidate):
-                        return candidate
-        except Exception:
-            pass
-
-    # 2) 图中最高频 IRI 前缀（排除标准词汇；并列取字典序最小，保证确定性）
-    #    单次 for s,p,o in g 遍历收集（seen 去重保持「每个术语计 1 次」的原语义，
-    #    避免对同一断言图中的高重复术语加权；字面量不含 IRI 前缀，直接跳过）。
-    from collections import Counter
-
-    counter: Counter[str] = Counter()
-    seen: set = set()
-    for s, p, o in g:
-        for term in (s, p, o):
-            if isinstance(term, Literal) or term in seen:
-                continue
-            seen.add(term)
-            text = str(term)
-            if "#" in text:
-                prefix = text.rsplit("#", 1)[0] + "#"
-            else:
-                # 无 '#' 的 IRI：取最后一个 '/' 前缀（协议+域名+路径，且短名非空）
-                head, _, tail = text.rpartition("/")
-                if not (head and tail and "//" in head):
-                    continue
-                prefix = head + "/"
-            if prefix not in _RESERVED_NS:
-                counter[prefix] += 1
-    if counter:
-        # 最高频；频率并列时取字典序最小，避免 set 迭代顺序导致的不确定
-        return min(counter, key=lambda p: (-counter[p], p))
-
-    # 3) 兜底
-    return DEFAULT_NS
+    return _sdk_resolve_ns(onto_path, g, use_xml_base, default_ns=DEFAULT_NS)
 
 
-# 公开名：领域包与框架子模块（reasoner/cq/）需要它，不该依赖下划线私有符号。
-# 旧名保留为别名，等 P3 收尾时清理调用点后再删。
+# 公开名：框架子模块（reasoner/cq/）与历史调用点用 `resolve_ns`。
+# 私有别名保留，避免已有调用点在这次搬迁里被迫改动（改的是实现归属，不是接口）。
 resolve_ns = _resolve_ns
 
 

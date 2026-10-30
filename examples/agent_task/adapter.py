@@ -19,8 +19,9 @@ import os
 
 from rdflib import URIRef, RDF, RDFS
 
-# 只从门面导入（P1-4）：框架内部模块调整时本领域不需要跟着改 import
-from reasoner.plugin import (
+# 只从领域插件 SDK 导入（P4）：SDK 之外的宿主模块（引擎实现、API、MCP）
+# 一律不许出现在领域包里——这是"领域可独立开发/发布"的实际判据。
+from ontology_plugin_sdk import (
     PluginContext,
     SemanticConfig,
     load_derivation_config,

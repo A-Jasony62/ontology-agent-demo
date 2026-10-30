@@ -21,8 +21,12 @@ from .adapter import (
     create_adapter_ctx,
 )
 
+# 声明按哪一版领域插件 API 编写（P4）：加载器比对主版本，不匹配即拒绝。
+PLUGIN_API = "1"
+
 __all__ = [
     "NAME",
+    "PLUGIN_API",
     "DESCRIPTION",
     "ONTO_FILE",
     "CAPABILITIES",

@@ -39,3 +39,8 @@ include = ["api*", "reasoner*", "domains*", "mcp*", "scripts*", "config*", "exam
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 领域插件 SDK 在 workspace 包里（packages/ontology-plugin-sdk/src）。这里显式
+# 加搜索路径，使得**即使没做 pip install**也能跑测试——CI 的干净检出场景走
+# `pip install -r requirements.txt`（内含 -e），但开发机上常有只更新了代码、
+# 忘了重装的情况；少一个"莫名其妙 ImportError"就是赚到。
+pythonpath = [".", "packages/ontology-plugin-sdk/src"]

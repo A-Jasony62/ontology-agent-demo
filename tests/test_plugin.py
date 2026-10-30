@@ -1,8 +1,12 @@
 """PluginContext 与领域-框架边界。
 
-第八条用例是这一批的验收核心：它把"领域不许 import 框架内部模块"
-从口头约定变成可执行断言——否则下次赶工时又会有人写
+边界断言是这一批的验收核心：它把"领域不许 import 宿主模块"从口头约定
+变成可执行断言——否则下次赶工时又会有人写
 `from reasoner.engine import local`，然后边界悄悄消失。
+
+P4 起这条线又挪了一次：门面本身搬进了 `ontology_plugin_sdk`（领域包唯一
+允许依赖的包），所以断言也跟着从"只许 import reasoner.plugin"改成"不许
+import 任何 reasoner.*"。
 """
 
 import ast
@@ -19,8 +23,12 @@ from reasoner.plugin import AboxStore, PluginContext  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 DOMAIN_PKG = ROOT / "examples" / "agent_task"
 
-# 领域包允许直接 import 的框架符号（门面 + 可选的框架能力包）
-ALLOWED_REASONER_IMPORTS = {"reasoner.plugin", "reasoner.cq"}
+# 领域运行时核心：只允许 import ontology_plugin_sdk（P4 起）。
+# 其余 .py（mcp.py / cq.py）是工具接线层，绑在宿主上跑，口径见对应测试。
+DOMAIN_CORE_FILES = {"__init__.py", "adapter.py"}
+
+# 工具接线层唯一被容忍的宿主依赖，理由写在该测试的 docstring 里。
+ALLOWED_TOOL_LAYER_IMPORTS = {"reasoner.cq"}
 
 
 class _EngineStub:
@@ -173,15 +181,74 @@ def _imported_modules(path: Path) -> set[str]:
     return found
 
 
-def test_domain_package_only_imports_facade():
-    """领域包不得 import 框架内部模块——只能走 reasoner.plugin 门面（或 reasoner.cq）。"""
+def _all_domain_packages() -> list[Path]:
+    """examples/ 下所有领域包（含 _minimal：它是零复制验收物，边界一样要守）。"""
+    return sorted(p for p in (ROOT / "examples").iterdir()
+                  if p.is_dir() and (p / "__init__.py").exists())
+
+
+def test_domain_core_imports_only_sdk():
+    """领域运行时核心（`__init__` / `adapter`）不得 import 任何 `reasoner.*`。
+
+    P4 起领域包的唯一入口是 `ontology_plugin_sdk`。这条断言比 P1 那版
+    （"只许 import reasoner.plugin"）更严——后者仍把领域锁在主仓库里，
+    只是锁得文明一点：只要门面还在 `reasoner/` 下，领域就永远搬不出去。
+    """
     offenders = {}
-    for py in sorted(DOMAIN_PKG.glob("*.py")):
-        for mod in _imported_modules(py):
-            if mod.startswith("reasoner") and mod not in ALLOWED_REASONER_IMPORTS:
-                offenders.setdefault(mod, []).append(py.name)
+    for pkg in _all_domain_packages():
+        for py in sorted(pkg.glob("*.py")):
+            if py.name not in DOMAIN_CORE_FILES:
+                continue
+            for mod in _imported_modules(py):
+                if mod == "reasoner" or mod.startswith("reasoner."):
+                    offenders.setdefault(f"{pkg.name}/{py.name}", []).append(mod)
 
     assert not offenders, (
-        f"领域包 import 了框架内部模块 {offenders}；"
-        f"请改从 reasoner.plugin 取（门面转发了 local / expand / AboxStore / 配置加载器）"
+        f"领域核心文件 import 了宿主模块 {offenders}；"
+        f"请改从 ontology_plugin_sdk 取（契约 / 配置 / 推导链 / ABox / 上下文）"
+    )
+
+
+def test_domain_core_actually_uses_sdk():
+    """反向断言：核心文件必须真从 SDK 拿东西。
+
+    只守"没有 reasoner.*"是不够的——把 import 全删了也能通过，但领域包
+    显然不会因此变好。这条断言要求解耦是"换成 SDK"而不是"删掉不要"。
+    """
+    for pkg in _all_domain_packages():
+        mods: set[str] = set()
+        for py in sorted(pkg.glob("*.py")):
+            if py.name in DOMAIN_CORE_FILES:
+                mods |= _imported_modules(py)
+        assert any(m == "ontology_plugin_sdk" or m.startswith("ontology_plugin_sdk.")
+                   for m in mods), (
+            f"{pkg.name} 的核心文件没有 import ontology_plugin_sdk——"
+            f"领域包还是靠什么跑起来的？"
+        )
+
+
+def test_domain_tool_layer_only_extra_imports_cq():
+    """工具接线层（`mcp.py` / `cq.py`）只允许再碰 `reasoner.cq` 一个宿主模块。
+
+    为什么留这个口子而不是顺手搬走：CQ 生成是**建模期**工具（581 行，含
+    prompts 拼装与 TBox 草稿校验），不是适配器运行时的依赖——`create_adapter`
+    这条路径完全不碰它。塞进 SDK 会把"最小契约"变成"工具箱"，而领域真正
+    该提供的只是 `cq_prompts.json` 这份数据。
+
+    下一步（独立立项）：把 CQ 工具注册整体上移为宿主能力，领域只留数据文件，
+    这个口子随之关闭。在那之前，用断言把它限制在"一个模块、且有理由"。
+    """
+    offenders = {}
+    for pkg in _all_domain_packages():
+        for py in sorted(pkg.glob("*.py")):
+            if py.name in DOMAIN_CORE_FILES:
+                continue
+            for mod in _imported_modules(py):
+                if (mod == "reasoner" or mod.startswith("reasoner.")) \
+                        and mod not in ALLOWED_TOOL_LAYER_IMPORTS:
+                    offenders.setdefault(f"{pkg.name}/{py.name}", []).append(mod)
+
+    assert not offenders, (
+        f"领域工具接线层 import 了 {offenders}；只允许 reasoner.cq"
+        f"（领域自有工具应改用 ontology_plugin_sdk）"
     )
