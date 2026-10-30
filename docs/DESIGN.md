@@ -391,15 +391,23 @@ curl -s -X POST http://127.0.0.1:8000/api/individuals \
 ## 9. MCP 接入（智能体直接调用，端口 9000）
 
 推理服务封装为标准 **MCP Server**（`mcp/mcp_server.py`，streamable-http，路径 `/mcp`），
-共 14 个工具：
+共 26 个工具（领域 9 + 通用/建模 17）：
 
-`mcp/mcp_server.py` 是**通用出口层**（不含领域词汇）：8 个领域工具随领域包走
-（`domains/<name>/mcp.py` 的 `register_tools` 注册，见 5.3），6 个通用工具由引擎直接提供。
+`mcp/mcp_server.py` 是**通用出口层**（不含领域词汇）：9 个领域工具随领域包走
+（`domains/<name>/mcp.py` 的 `register_tools` 注册，见 5.3），其余 17 个由引擎与框架提供
+（12 个通用工具 + 5 个建模 / 质量工具）。
 
-- **8 个领域工具**（走适配器，默认 `domains/agent_task/mcp.py`）：capability_match /
-  orchestrate / assign / classify / consistency / explain / ontology（图谱）/ entities（实体清单）；
-- **6 个通用工具**（走引擎）：query_sparql / individuals / classes / types /
-  property_values / infer。
+- **9 个领域工具**（走适配器，默认 `domains/agent_task/mcp.py`）：capability_match /
+  orchestrate / assign / classify / consistency / explain / ontology（图谱）/ status（状态自检）/
+  entities（实体清单）；
+- **12 个通用工具**（走引擎，任意 `.owl` 可用）：query_sparql / individuals / classes /
+  types_of / property_values / infer / explain_proof / predefined_queries /
+  run_predefined_query / active_facts / guard_status / pipeline_gate；
+- **5 个建模 / 质量工具**：guide_tbox_draft / validate_tbox_draft / validate_shapes /
+  guide_cq_generation / validate_cqs。
+
+调用护栏在同目录 `policy.py`（语义白名单门禁）与 `tool_guard.py`（预算熔断 / 循环拦截 /
+缓存复用 / 审计留痕），均随领域包配置，未启用时逐字节向后兼容。
 
 启动（`--domain` 指定领域，默认 agent_task；owl 路径由领域包 `ONTO_FILE` 自声明）：
 
@@ -444,7 +452,7 @@ python3 -m venv .venv
 curl -s http://127.0.0.1:8000/api/health                      # 健康检查
 curl -s -X POST http://127.0.0.1:8000/api/reason \
   -H "Content-Type: application/json" -d '{"type":"capability_match","task":"t_login_dev"}'
-.venv/bin/python -m pytest tests/ -q                          # 29 项测试全绿
+.venv/bin/python -m pytest tests/ -q                          # 380 项测试全绿
 ```
 
 ### 10.4 Skill 封装（可选）
@@ -461,7 +469,7 @@ python scripts/query.py capability_match --task t_login_dev --local  # 内嵌引
 
 ## 11. 测试
 
-`tests/` 共 29 项，覆盖：
+`tests/` 共 380 项，覆盖：
 
 - `test_reasoning.py`：R1 属性链匹配、R2 复合任务委派、R3 传递闭包、R4 冲突、
   推导链结构（fact/rule/conclusion）、分类、语义覆盖；
@@ -546,13 +554,13 @@ ontology-agent-demo/
 │       ├── adapter.py              #   适配器（R2/R4 规则 + 5 查询 + 图谱）
 │       ├── config.json             #   语义配置（类角色映射）
 │       ├── derivation.json         #   推导链配置（文案 + 规则）
-│       ├── mcp.py                  #   领域 MCP 工具注册（8 个领域工具）
+│       ├── mcp.py                  #   领域 MCP 工具注册（9 个领域工具）
 │       └── agent_task_ontology.owl #   本体定义
 ├── api/                            # REST API（FastAPI，:8000，领域端点走适配器）
 ├── mcp/mcp_server.py               # MCP Server 通用出口（:9000，--domain 动态加载领域工具）
 ├── frontend/                       # 图谱展示页
 ├── scripts/build_ontology.py       # 一键重建本体（含结构自检）
-├── tests/                          # 29 项自动化测试
+├── tests/                          # 380 项自动化测试
 └── requirements.txt
 ```
 
