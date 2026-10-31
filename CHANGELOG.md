@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增查询两段式超时（`reasoner/engine.py` + MCP / API 接线，~100 行内）：坏查询「限时一条明确报错、不挂死整机」——此前一条算不完的查询会拖住与 API / MCP / AI 助手同进程的整机
+  - 两段式语义（对齐 Jena ARQ `queryTimeout` 官方形态，如 `"500,10000"`：首批结果 500ms 内就绪、整体 10s 封顶）：`kind=first`（首批结果就绪时限，非流式近似——观测整批物化是否就绪）/ `kind=total`（整体完成时限，**硬上限**：即使 `first` 配得更宽也绝不越过 `total`）
+  - 默认关闭（环境变量 `ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS` / `ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS`，未设/非正数 = 不启用）：两段均未启用时直通原执行路径，零线程开销、逐字节兼容；`query_sparql` 亦可显式传 `first_ms` / `total_ms`
+  - 结构化错误而非挂住：MCP `query_sparql` / `run_predefined_query` 返回 `{error: query_timeout, kind, limit_ms, hint}`；API `/api/query` 返回 408 与结构化详情；单次超时仅放弃该查询，后续查询与服务不受影响
+  - 局限如实声明：Python 线程不可强杀（超时后后台线程跑完自然结束，单机规模无害）；彻底隔离的子进程方案为后续独立改造——不塞本 PR
+  - 实现方式：rdflib 无超时参数——起后台线程跑查询、主线程按两段时限放弃结果
+
 ### Fixed
 
 - **启动可用性（#34/#35）**：`make setup/run/mcp`、`scripts/start.sh`、Dockerfile 统一通过 `ontologyctl domain ensure` 准备运行态领域；新增 CI `smoke`（装领域 → import → 起服务 → `/api/health`）与 `docker`（构建 + 容器健康检查）两个 job，避免“单测全绿但服务起不来”

@@ -59,7 +59,7 @@ class LazyStaticFiles(StaticFiles):
     async def check_config(self) -> None:
         pass
 
-from reasoner.engine import get_engine, OntologyEngine
+from reasoner.engine import get_engine, OntologyEngine, SparqlTimeoutError
 from reasoner.protocol import (
     capability_handlers,
     dangling_capabilities,
@@ -426,8 +426,17 @@ def consistency():
 
 @app.post("/api/query")
 def sparql_query(req: SparqlRequest):
+    """SPARQL 查询入口（支持面见 README「SPARQL 支持边界」）。两段式超时
+    （可选，环境变量 ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS /
+    ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS）：超时返回 408 与结构化详情，而非挂住。"""
     try:
         return {"results": ENGINE.query_sparql(req.sparql)}
+    except SparqlTimeoutError as exc:
+        raise HTTPException(
+            status_code=408,
+            detail={"error": "query_timeout", "kind": exc.kind,
+                    "limit_ms": exc.limit_ms, "message": str(exc),
+                    "hint": "请缩小查询范围或加 LIMIT，或调整两段超时环境变量"})
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"SPARQL 执行失败: {exc}")
 
