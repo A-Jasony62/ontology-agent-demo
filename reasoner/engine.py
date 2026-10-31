@@ -103,9 +103,12 @@ class SparqlTimeoutError(RuntimeError):
     """SPARQL 查询超时（两段式：首条结果 / 整体完成）。属性 kind / limit_ms。
 
     两段语义（对齐 Jena ARQ 的 queryTimeout 两段式形态，如 "500,10000"：
-    首条结果 500ms 内必出、整体 10s 封顶）：
-      kind="first" —— 首条结果就绪时限超时（查询可能卡在求值阶段）
-      kind="total" —— 整体完成时限超时（能出但太慢）
+    首批结果 500ms 内就绪、整体 10s 封顶）：
+      kind="first" —— 首批结果就绪时限超时（查询可能卡在求值阶段）
+      kind="total" —— 整体完成时限超时（能出但太慢）；total 是硬上限，
+      即便 first 配得更宽，也绝不会超过 total
+    非流式近似（如实声明）：本实现一次性物化整页结果，first 段观测的是
+    「整批结果是否在时限内就绪」，取不到真正的首行时间。
     局限（如实声明）：Python 线程不可强杀，超时后后台线程会跑完自然结束
     （单机规模无害）；彻底隔离的子进程方案为后续独立改造。
     """
@@ -115,7 +118,7 @@ class SparqlTimeoutError(RuntimeError):
         self.limit_ms = limit_ms
         super().__init__(
             message
-            or (f"查询超时（{'首条结果' if kind == 'first' else '整体完成'}时限 {limit_ms}ms）——"
+            or (f"查询超时（{'首批结果' if kind == 'first' else '整体完成'}时限 {limit_ms}ms）——"
                 f"请缩小查询范围或加 LIMIT，或调整环境变量 "
                 f"ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS / ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS"))
 
@@ -147,9 +150,11 @@ def _consume_query(g, sparql: str) -> list[dict]:
 def _run_query_timed(g, sparql: str, first_ms, total_ms) -> list[dict]:
     """带时限执行：后台线程跑查询，主线程按两段时限放弃（结果不回灌）。
 
-    demo 的查询为一次性物化整页结果（非流式）：first_ms 作用于「首批结果
-    就绪」（区分卡死与慢），total_ms 封顶整体完成时间。超时后放弃该次结果
-    并抛 SparqlTimeoutError（后续查询与服务不受影响：单次超时仅放弃该查询）。"""
+    demo 的查询为一次性物化整页结果（非流式）：first_ms 作用于「整批结果
+    是否就绪」（卡死与慢都能拦，但拿不到真正的首行时间），total_ms 封顶
+    整体完成时间。两段都设时取更紧的那段先生效——total 是硬上限，不能被
+    更宽的 first 盖过。超时后放弃该次结果并抛 SparqlTimeoutError
+    （后续查询与服务不受影响：单次超时仅放弃该查询）。"""
     holder: dict = {}
     done = threading.Event()
 
@@ -163,9 +168,20 @@ def _run_query_timed(g, sparql: str, first_ms, total_ms) -> list[dict]:
 
     threading.Thread(target=_worker, daemon=True).start()
     start = time.monotonic()
-    if first_ms is not None and not done.wait(first_ms / 1000):
-        raise SparqlTimeoutError("first", first_ms)
-    if total_ms is not None:
+
+    # 第一段：取两段中更紧的时限，并按真正生效的那一段标注 kind——否则
+    # 「first=10s, total=100ms」会等满 10s 才发现超时，且错报成 kind=first。
+    if first_ms is None:
+        stage_kind, stage_ms = "total", total_ms
+    elif total_ms is None or first_ms <= total_ms:
+        stage_kind, stage_ms = "first", first_ms
+    else:
+        stage_kind, stage_ms = "total", total_ms
+    if stage_ms is not None and not done.wait(stage_ms / 1000):
+        raise SparqlTimeoutError(stage_kind, stage_ms)
+
+    # 第二段：first 段通过后，补足 total 的剩余预算（total 更宽时才需要）。
+    if first_ms is not None and total_ms is not None and first_ms < total_ms:
         remaining = total_ms / 1000 - (time.monotonic() - start)
         if not done.wait(max(remaining, 0.0)):
             raise SparqlTimeoutError("total", total_ms)
@@ -415,9 +431,10 @@ class OntologyEngine:
                       total_ms: int | None = None) -> list[dict]:
         """执行 SPARQL SELECT，返回 [{变量: 值}, ...]（IRI 值转短名）。
 
-        两段式超时（可选）：first_ms（首条结果时限）/ total_ms（整体时限），
-        未传时读环境变量 ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS /
-        ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS（未设/非正数 = 不启用）。
+        两段式超时（可选）：first_ms（首批结果就绪时限，非流式近似）/ total_ms
+        （整体完成时限，硬上限），未传时读环境变量
+        ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS / ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS
+        （未设/非正数 = 不启用；显式传 <=0 同样视为不启用）。
         两段均未启用时直通原执行路径（零线程开销、逐字节兼容）。
         超时抛 SparqlTimeoutError（kind/limit_ms），单次超时仅放弃该查询。
         """
@@ -425,6 +442,10 @@ class OntologyEngine:
             "ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS")
         total = total_ms if total_ms is not None else _env_timeout_ms(
             "ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS")
+        # 显式参数与 env 同一口径：非正数 = 不启用（否则 first_ms=0 会立刻超时，
+        # 与 env 里 0 表示关闭自相矛盾）。
+        first = first if first is not None and first > 0 else None
+        total = total if total is not None and total > 0 else None
         if first is None and total is None:
             return _consume_query(self.g, sparql)
         return _run_query_timed(self.g, sparql, first, total)

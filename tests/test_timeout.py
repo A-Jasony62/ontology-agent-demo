@@ -73,7 +73,7 @@ def test_first_stage_timeout_fires_before_query_finishes():
         with pytest.raises(SparqlTimeoutError) as ei:
             e.query_sparql(FAST_SPARQL, first_ms=150)
         assert ei.value.kind == "first" and ei.value.limit_ms == 150
-        assert "首条结果" in str(ei.value)
+        assert "首批结果" in str(ei.value)
         assert time.monotonic() - start < 2.0          # 没等查询跑完
     finally:
         e.g = real_graph
@@ -122,8 +122,31 @@ def test_recovery_engine_serves_after_timeout():
     assert again == rows
 
 
+def test_total_is_hard_cap_when_first_is_wider():
+    """边界①：first 比 total 宽时 total 仍是硬上限（不被 first 盖过，kind=total）。"""
+    e = _engine()
+    real_graph = e.g
+    e.g = SlowGraph(3.0)
+    try:
+        start = time.monotonic()
+        with pytest.raises(SparqlTimeoutError) as ei:
+            e.query_sparql(FAST_SPARQL, first_ms=10000, total_ms=150)
+        assert ei.value.kind == "total" and ei.value.limit_ms == 150
+        assert time.monotonic() - start < 1.0      # 没等满 first=10s
+    finally:
+        e.g = real_graph
+
+
+def test_non_positive_explicit_limits_mean_disabled():
+    """边界②：显式传 <=0 与 env 同口径——视为不启用，而不是立刻超时。"""
+    e = _engine()
+    rows = e.query_sparql(FAST_SPARQL)
+    assert e.query_sparql(FAST_SPARQL, first_ms=0, total_ms=0) == rows
+    assert e.query_sparql(FAST_SPARQL, first_ms=-1, total_ms=-1) == rows
+
+
 def test_env_var_config_path(monkeypatch):
-    """边界②：环境变量配置路径——TOTAL 超时生效；非法/非正值视为未启用。"""
+    """边界③：环境变量配置路径——TOTAL 超时生效；非法/非正值视为未启用。"""
     assert _env_timeout_ms("NO_SUCH_ENV_VAR_XYZ") is None            # 未设
     monkeypatch.setenv("ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS", "120")
     assert _env_timeout_ms("ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS") == 120
@@ -145,7 +168,7 @@ def test_env_var_config_path(monkeypatch):
 
 
 def test_mcp_tool_returns_structured_timeout_error(monkeypatch):
-    """边界③：MCP 工具层——超时返回结构化错误（不挂住、不裸抛），后续调用正常。"""
+    """边界④：MCP 工具层——超时返回结构化错误（不挂住、不裸抛），后续调用正常。"""
 
     class FakeServer:
         def __init__(self):
@@ -178,7 +201,7 @@ def test_mcp_tool_returns_structured_timeout_error(monkeypatch):
 
 
 def test_api_query_returns_408_with_details(monkeypatch):
-    """边界④：API 层——/api/query 超时返回 408 与结构化详情（而非 400/挂住）。"""
+    """边界⑤：API 层——/api/query 超时返回 408 与结构化详情（而非 400/挂住）。"""
     from fastapi.testclient import TestClient
     from api import main as api_main
 
