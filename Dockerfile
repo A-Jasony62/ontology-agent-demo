@@ -23,11 +23,17 @@ WORKDIR /app
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 先装依赖（利用构建缓存）
+# SDK 是本仓库 workspace 包，requirements.txt 用 -e ./packages/ontology-plugin-sdk
+# 引用它——必须在 pip install 之前把 packages/ 拷进来，否则 editable 路径不存在。
 COPY requirements.txt .
+COPY packages ./packages
 RUN pip install --no-cache-dir -r requirements.txt -i "$PIP_INDEX_URL"
 
 # 再拷代码（dist/node_modules/data 均已被 .dockerignore 排除）
 COPY . .
+# 运行态领域包不入镜像：构建期从随仓库分发的 examples/ 安装默认领域，
+# 避免镜像内容取决于构建机本地是否装过领域。
+RUN python scripts/ontologyctl.py domain ensure --from ./examples/agent_task
 # 覆盖为阶段 1 构建出的新前端（dist 在 .gitignore 中，不依赖本地构建产物）
 COPY --from=frontend /frontend/dist ./frontend/app/dist
 

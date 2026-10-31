@@ -156,10 +156,15 @@ class DomainManager:
             name = self.settings.effective_default()
             if not name:
                 available = self.installed()
-                listing = f"已安装 {len(available)} 个：{', '.join(available)}" if available \
-                    else "尚未安装任何领域包"
+                if available:
+                    raise DomainNotFoundError(
+                        f"未确定默认领域：{self.settings.root} 下已安装 "
+                        f"{len(available)} 个：{', '.join(available)}。\n"
+                        "请显式指定默认领域：python scripts/ontologyctl.py domain use <name>；"
+                        "或在启动时传 --domain <name> / 设置 ONTOLOGY_DOMAIN。"
+                    )
                 raise DomainNotFoundError(
-                    f"未确定默认领域：{self.settings.root} 下{listing}。\n"
+                    f"未确定默认领域：{self.settings.root} 下尚未安装任何领域包。\n"
                     "请安装领域包：python scripts/ontologyctl.py domain install "
                     "--from ./examples/agent_task；"
                     "或在 config/domain.json 设置 domains.default。"

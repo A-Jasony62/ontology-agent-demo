@@ -181,7 +181,6 @@ def register_tools(server: MCPServer, get_adapter) -> None:
     def ontology() -> dict:
         return get_adapter().graph_export()
 
-    @server.tool(description="本体状态（只读）：返回基线文件哈希与内存变更计数，用于与 API 端一致性校验（REQ-02）。dirty=true 表示存在未持久化的变更。")
     @server.tool(description="本体状态（只读）：返回基线文件哈希与内存变更计数，用于与 API 端一致性校验（REQ-02）。dirty=true 表示存在未持久化的变更；extensions_dir 反映扩展增量目录是否已启用（issue #6，与 API /api/ontology/status 对齐）。")
     def status() -> dict:
         a = get_adapter()

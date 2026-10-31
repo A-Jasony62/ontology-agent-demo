@@ -18,6 +18,10 @@ python scripts/ontologyctl.py domain install --from ./examples/agent_task --forc
 python scripts/ontologyctl.py domain install --from ../my-domain --name finance_ops
 ```
 
+首次安装且尚未配置 `domains.default` 时，`install` 会自动把新领域写为默认；
+再安装第二个领域不会覆盖已有默认。`domain ensure --from <path>` 可在启动脚本中
+幂等地完成这一步；多领域且无默认时它会返回可操作的错误。
+
 ## 加载根如何决定
 
 优先级（高 → 低）：

@@ -80,7 +80,7 @@ python3 -m venv .venv
 ### 运行测试与一键演示
 
 ```bash
-.venv/bin/python -m pytest tests/ -v      # 380 项测试
+.venv/bin/python -m pytest tests/ -v      # 411 项测试
 make demo                                  # 按顺序跑一遍核心接口（需服务已启动）
 ```
 
@@ -384,7 +384,7 @@ ontology-agent-demo/
 
 调用护栏在同目录 `policy.py`（语义白名单门禁）与 `tool_guard.py`（预算熔断 / 循环拦截 /
 缓存复用 / 审计留痕），均随领域包配置，未启用时逐字节向后兼容。
-**换领域时领域工具随之更换**（`--domain fault_diag` 会得到该领域的自有能力，如 `diagnose`）。
+**换领域时领域工具随之更换**：有 `mcp.py` 的领域注册自有工具；未提供 `mcp.py` 的领域（如 `fault_diag`）只注册通用 / 建模工具，其 `diagnose` 仍可通过 REST 调用。
 
 ```bash
 cd ontology-agent-demo
@@ -413,11 +413,12 @@ URL 填 `http://127.0.0.1:9000/mcp`，保存后即可在对话中直接调用。
 ```
 
 - 本地看：直接打开 `docs/guide/README.md`
+- 操作手册：`docs/manual/`（快速开始 / 推理查询 / 前端与 MCP / 运维 / 场景演练 / 二次开发 / FAQ + 速查表），与指南同一站点导航
 - 在线站点：由仓库 CI 工作流自动构建部署
 
 ## 开发与贡献
 
-- **测试**：`make test`（pytest，380 项，含推理规则、插件契约、热切换与 SDK 边界）；CI 在 push / PR 时对 Python 3.10–3.12 全量跑。
+- **测试**：`make test`（pytest，411 项，含推理规则、插件契约、热切换与 SDK 边界）；CI 在 push / PR 时对 Python 3.10–3.12 全量跑。
 - **文档**：指南用 MkDocs 构建，推送 `main` 后由 CI 自动构建并部署文档站；本地 `make docs` 预览需 Python 3.10–3.12（当前机器 3.14 暂无 watchdog 轮子，故本地构建在 CI 上验证）。
 - **可安装包**：`pip install -e .`（pyproject.toml，依赖与 requirements.txt 一致）。领域插件 SDK 是
   同仓库的 workspace 包，`requirements.txt` 已含 `-e ./packages/ontology-plugin-sdk`，会一起装上。

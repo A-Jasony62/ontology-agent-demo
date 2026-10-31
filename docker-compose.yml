@@ -10,4 +10,5 @@ services:
     ports:
       - "9000:9000"
     # 容器内须绑定 0.0.0.0（默认 127.0.0.1 仅容器内可达，端口映射会拒连）
-    command: python mcp/mcp_server.py --domain agent_task --host 0.0.0.0 --port 9000
+    # 领域由配置决定（镜像内已 ensure 安装 agent_task）；需要换领域时覆盖 --domain。
+    command: python mcp/mcp_server.py --host 0.0.0.0 --port 9000

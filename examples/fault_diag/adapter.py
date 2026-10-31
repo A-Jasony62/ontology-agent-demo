@@ -81,15 +81,22 @@ def _handle_diagnose(adapter, req):
     少了这一条，声明 diagnose 的领域在框架里没有任何可达路径：`/api/reason`
     的框架内置表只有三个键，REST 侧既不开门也不报错。
 
-    参数走 `params.asset`（也接受老字段 `task`），因为 diagnose 的形状
-    （一个部件名）是本研究领域自己的，不该往 ReasonRequest 里加字段。
+    公开参数名统一为 `params.component`（与适配器方法、返回字段一致）；
+    兼容旧的 `params.asset` 与 `task` 字段，避免已有调用直接失效。
     抛 ValueError 让 API 转 400——领域包不为状态码 import FastAPI。
     """
     params = req.params or {}
-    asset = (params.get("asset") or req.task or "").strip()
-    if not asset:
-        raise ValueError("diagnose 需要指定 asset（params.asset 或 task 字段）")
-    return adapter.diagnose(adapter.NS[asset])
+    component = (
+        params.get("component")
+        or params.get("asset")          # 兼容旧名
+        or req.task                     # 兼容内置字段
+        or ""
+    ).strip()
+    if not component:
+        raise ValueError(
+            "diagnose 需要指定 component（params.component；兼容 params.asset / task 字段）"
+        )
+    return adapter.diagnose(adapter.NS[component])
 
 
 # 领域自有能力的出口表；值与框架内置表同签名，运行时并入同一张路由表。

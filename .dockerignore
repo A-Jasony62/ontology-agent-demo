@@ -16,3 +16,14 @@ frontend/app/dist
 
 # 运行时上传的本体数据
 data/
+
+# 运行态领域包与本地配置：镜像内由 domain ensure 重建，避免把构建机状态带进镜像。
+# 先排除 domains/ 下全部内容，再显式放回框架文件（安装器依赖它们）。
+domains/*
+!domains/__init__.py
+!domains/registry.py
+!domains/manager.py
+!domains/installer.py
+!domains/README.md
+config/domain.json
+backups/

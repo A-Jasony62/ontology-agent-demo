@@ -62,7 +62,7 @@ from reasoner.engine import OntologyEngine, SparqlTimeoutError
 from reasoner.pipeline_gate import run_gates
 from reasoner.proof import build_proof
 from config import load_config
-from domains import load_domain, load_domain_module
+from domains import load_domain, load_domain_module, package_onto_path
 from mcp.server.mcpserver import MCPServer
 
 # 本地受控语义策略与调用护栏（mcp/policy.py、mcp/tool_guard.py）。注：仓库的 mcp/ 目录
@@ -81,6 +81,30 @@ _guard_spec.loader.exec_module(_guard_mod)
 guard_mod = _guard_mod
 
 
+class _ToolNameGuard:
+    """包装 MCPServer.tool：同一个领域内重复工具名直接失败。
+
+    此前重复装饰器只在启动日志里留一句 "Tool already exists"，最终哪个
+    描述生效取决于 SDK 实现——这类 merge 残留应该在注册时暴露。
+    """
+
+    def __init__(self, server):
+        self._server = server
+        self._names: set[str] = set()
+
+    def tool(self, *args, **kwargs):
+        def deco(fn):
+            name = kwargs.get("name") or (args[0] if args else None) or fn.__name__
+            if name in self._names:
+                raise ValueError(f"领域 MCP 工具重复注册：{name}")
+            self._names.add(name)
+            return self._server.tool(*args, **kwargs)(fn)
+        return deco
+
+    def __getattr__(self, name):
+        return getattr(self._server, name)
+
+
 def build_server(get_engine, get_adapter, domain_name: str, description: str) -> MCPServer:
     """组装 MCP Server：领域工具（随领域包）+ 通用工具（引擎直接提供）。
 
@@ -97,8 +121,20 @@ def build_server(get_engine, get_adapter, domain_name: str, description: str) ->
     # 领域工具：动态加载领域包的 MCP 注册器（领域相关代码随领域包走）
     # 先确保领域包已按配置 root 加载，再取子模块——领域包可能在 examples/ 或外部目录
     load_domain_module(domain_name)
-    mod = importlib.import_module(f"domains.{domain_name}.mcp")
-    mod.register_tools(server, get_adapter)
+    try:
+        mod = importlib.import_module(f"domains.{domain_name}.mcp")
+    except ModuleNotFoundError as exc:
+        if exc.name != f"domains.{domain_name}.mcp":
+            raise
+        # mcp.py 是可选文件（见 examples/README.md）：没有它时只注册通用工具，
+        # 而不是让整个 MCP Server 起不来。只有该模块本身缺失才降级；模块内部
+        # 缺依赖仍原样抛出，避免把真实错误伪装成"领域没提供工具"。
+        print(
+            f"[mcp] 领域「{domain_name}」未提供 mcp.py，仅注册通用工具",
+            file=sys.stderr, flush=True,
+        )
+    else:
+        mod.register_tools(_ToolNameGuard(server), get_adapter)
 
     # 通用工具（L1：与本体定义无关，任意 .owl 可用）；受控语义策略与调用护栏随领域包走
     _register_generic_tools(server, get_engine,
@@ -307,12 +343,28 @@ def main() -> int:
     settings = load_config(cli_root=args.domains_root, cli_domain=args.domain)
     domain_name = settings.effective_default()
     if domain_name is None:
+        installed = settings.installed()
+        if installed:
+            parser.error(
+                f"未确定默认领域：{settings.root} 下已安装多个领域：{', '.join(installed)}。"
+                "请用 --domain <name> 指定，或执行 "
+                "python scripts/ontologyctl.py domain use <name>，"
+                "或在 config/domain.json 设置 domains.default。"
+            )
         parser.error(
-            f"未确定领域：{settings.root} 下已安装 {settings.installed() or '（空）'}。"
-            "请安装领域包（ontologyctl domain install --from <path>）、"
-            "用 --domain 指定，或在 config/domain.json 设置 domains.default。"
+            f"未确定默认领域：{settings.root} 下尚未安装任何领域包。"
+            "请执行 python scripts/ontologyctl.py domain install "
+            "--from ./examples/agent_task，或用 --domain 指定。"
         )
     domain_mod = load_domain_module(domain_name, settings=settings)
+    # 领域包的 ONTO_FILE 可能是相对路径（如 fault_diag 的 "fault_diag.owl"）；
+    # 统一经 package_onto_path 解析成包内绝对路径，避免 MCP 以 CWD 为基准找本体。
+    onto_path = package_onto_path(domain_name, settings=settings)
+    if not onto_path:
+        parser.error(
+            f"领域「{domain_name}」未解析到本体文件；请在包内 config.json 声明 "
+            "onto_file，或确保包内恰好有一个 *.owl。"
+        )
 
     # 运行态（引擎 / 适配器随热重载替换）：工具闭包只依赖这两个工厂
     state = {}
@@ -327,7 +379,7 @@ def main() -> int:
     def get_adapter():
         return state["adapter"]
 
-    state["engine"], state["adapter"] = _load(domain_mod.ONTO_FILE)
+    state["engine"], state["adapter"] = _load(onto_path)
 
     def _reload(trigger: str) -> bool:
         """重建引擎 + 适配器（核心 + extensions/）；失败保持旧状态。SIGHUP / 文件监听共用。
@@ -337,7 +389,7 @@ def main() -> int:
         无需重启进程（与 API 端 reload 行为一致）。
         """
         try:
-            new_engine, new_adapter = _load(domain_mod.ONTO_FILE)
+            new_engine, new_adapter = _load(onto_path)
         except Exception as exc:
             print(f"[{trigger}] 重载失败（保持旧状态）: {exc}", file=sys.stderr, flush=True)
             return False
@@ -359,7 +411,7 @@ def main() -> int:
     # 环境无关（信号在部分运行环境被抑制），改文件即生效。
     if args.watch:
         def _fingerprint():
-            paths = [domain_mod.ONTO_FILE]
+            paths = [onto_path]
             ext = state["engine"].extensions_dir
             if ext and os.path.isdir(ext):
                 paths += sorted(

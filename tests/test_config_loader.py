@@ -5,6 +5,7 @@
 """
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import config.loader as loader_mod  # noqa: E402
 from config.loader import (  # noqa: E402
     ConfigError,
     ENV_DOMAIN,
@@ -221,3 +223,16 @@ def test_repo_template_is_valid():
     cfg = load_config(project_root=repo_root, env={})
     assert cfg.root == Path(repo_root, "domains").resolve()
     assert isinstance(cfg.watch_enabled, bool)
+
+
+def test_missing_local_config_logs_info_not_warning(tmp_path, caplog):
+    """回退模板是正常状态：只记 info，不污染 warning/JSON 输出。"""
+    cdir = tmp_path / "cfg"
+    _write(cdir / "domain.example.json", {"domains": {"root": "rt"}})
+    loader_mod._fallback_notified = False
+
+    with caplog.at_level(logging.DEBUG, logger="config.loader"):
+        load_config(config_dir=cdir, project_root=tmp_path, env={})
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("回退模板" in r.getMessage() for r in caplog.records)
