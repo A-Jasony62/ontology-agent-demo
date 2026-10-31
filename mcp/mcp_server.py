@@ -61,6 +61,7 @@ if PROJECT_ROOT not in sys.path:
 from reasoner.engine import OntologyEngine, SparqlTimeoutError
 from reasoner.pipeline_gate import run_gates
 from reasoner.proof import build_proof
+from reasoner import rules as rules_mod
 from config import load_config
 from domains import load_domain, load_domain_module, package_onto_path
 from mcp.server.mcpserver import MCPServer
@@ -285,6 +286,28 @@ def _register_generic_tools(server: MCPServer, get_engine, policy=None, guard=No
     def pipeline_gate(ttl: str, abox: str | None = None,
                       gates: list[str] | None = None) -> dict:
         return run_gates(ttl, abox, gates)
+
+    @tool(description=(
+        "SHACL 业务规则执行（通用）：对当前图执行领域包 rules/*.ttl 的 SHACL 规则"
+        "（W3C 标准规则语言，pyshacl 原生执行，不自造规则格式），CONSTRUCT 产出派生"
+        "三元组并按文件归因（每文件独立执行 + 图差集），改规则文件即改业务口径、"
+        "无需发版。max_iterations 控制连锁轮数（默认 10；触上限停止且 "
+        "exceeded_iterations=true 如实报告，不静默截断）；dry_run=true 在图副本上"
+        "预览产出、引擎原图不动；rules 可选指定规则文件列表（缺省=当前领域全部规则"
+        "文件，无规则时如实说明）。与 validate_shapes 分工：校验管「数据合不合格」，"
+        "本工具管「推出新结论」。"))
+    def run_rules(max_iterations: int = 10, dry_run: bool = False,
+                  rules: list[str] | None = None) -> dict:
+        return rules_mod.apply_rules(get_engine(), rules,
+                                     max_iterations=max_iterations, dry_run=dry_run)
+
+    @tool(description=(
+        "SHACL 业务规则清单（通用）：列出领域包 rules/*.ttl 的规则（只解析不执行）——"
+        "每文件的规则 id / 类型 / 语义标注（label/comment）/ 停用状态；三元组规则"
+        "（sh:TripleRule）标注 supported=false（第一版仅执行 SPARQLRule）。"
+        "无规则文件时如实说明。配 run_rules 使用：先看清单再执行。"))
+    def list_rules(rules: list[str] | None = None) -> dict:
+        return rules_mod.list_rules(rules)
 
 
 def _make_sighup_handler(reload_fn):

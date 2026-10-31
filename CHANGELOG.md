@@ -7,6 +7,8 @@
 
 ### Added
 
+- **SHACL 业务规则执行 `reasoner/rules.py` + MCP `run_rules` / `list_rules` 工具**：业务规则用 SHACL 规则书写（W3C 标准规则语言，`rules/*.ttl` 随领域包分发、与 shapes/ 同栈），薄包装 pyshacl `shacl_rules()` 执行，不自造规则格式——SHACL 1.2 家族十月密集推进标准化（Inference Rules 工作草案 2026-10-28），自造格式等于逆着标准另起炉灶；规则与校验同语言、改文件即改业务口径无需发版。执行按文件独立跑 + 前后图差集**按文件归因**（文件间按名排序执行，如实文档化）；规则连锁迭代上限可配（默认 10，pyshacl 内置 100 轮硬编码且超限抛异常不可用，故本层自带轮次循环），触上限 `exceeded_iterations=true` 停止并说明（不静默截断）；`dry_run` 在图副本上预览产出、引擎原图不动；坏规则文件快速失败指明文件、其余文件照常执行。第一版仅支持 sh:SPARQLRule（三元组规则为后续工作）。示例规则两则（`examples/agent_task/rules/`）：R5 高风险复合任务无人可整体执行 → 需人工介入；R6 高风险单片任务 → 强制双人复核（两规则命中集不相交，演示按文件归因）。与 `validate_shapes` 分工：校验管「数据合不合格」，规则管「推出新结论」
+
 - 新增查询两段式超时（`reasoner/engine.py` + MCP / API 接线，~100 行内）：坏查询「限时一条明确报错、不挂死整机」——此前一条算不完的查询会拖住与 API / MCP / AI 助手同进程的整机
   - 两段式语义（对齐 Jena ARQ `queryTimeout` 官方形态，如 `"500,10000"`：首批结果 500ms 内就绪、整体 10s 封顶）：`kind=first`（首批结果就绪时限，非流式近似——观测整批物化是否就绪）/ `kind=total`（整体完成时限，**硬上限**：即使 `first` 配得更宽也绝不越过 `total`）
   - 默认关闭（环境变量 `ONTOLOGY_SPARQL_FIRST_RESULT_TIMEOUT_MS` / `ONTOLOGY_SPARQL_TOTAL_TIMEOUT_MS`，未设/非正数 = 不启用）：两段均未启用时直通原执行路径，零线程开销、逐字节兼容；`query_sparql` 亦可显式传 `first_ms` / `total_ms`
