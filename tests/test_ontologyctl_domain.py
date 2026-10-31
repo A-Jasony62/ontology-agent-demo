@@ -38,9 +38,16 @@ def _load_ctl():
 
 @pytest.fixture
 def ctl(tmp_path, monkeypatch):
-    """CLI 模块 + 隔离的项目根（backups / config 都落在 tmp 里）。"""
+    """CLI 模块 + 隔离的项目根（backups / config 都落在 tmp 里）。
+
+    CI 干净检出时 `tests/conftest.py` 会设置 ONTOLOGY_DOMAINS_ROOT 指向临时
+    领域副本；这里测的是 CLI 自己的配置解析，必须摘掉这两个环境变量，否则
+    `_load_cfg` 会优先读 conftest 的临时 root。
+    """
     mod = _load_ctl()
     monkeypatch.setattr(mod, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("ONTOLOGY_DOMAINS_ROOT", raising=False)
+    monkeypatch.delenv("ONTOLOGY_DOMAIN", raising=False)
     return mod
 
 
