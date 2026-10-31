@@ -2,20 +2,24 @@ PY := .venv/bin/python
 PIP := .venv/bin/pip
 UVICORN := .venv/bin/uvicorn
 
-.PHONY: help setup run mcp test demo build-ontology docs
+.PHONY: help setup ensure-domain run mcp test demo build-ontology docs
 
 help: ## 查看可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-setup: ## 首次：创建虚拟环境并安装依赖
+setup: ## 首次：创建虚拟环境、安装依赖并准备默认领域
 	python3 -m venv .venv
 	$(PIP) install -r requirements.txt
+	$(MAKE) ensure-domain
 
-run: ## 启动推理 API + Demo 页面（http://127.0.0.1:8000）
+ensure-domain: ## 确保运行态有可用领域（无则安装示例领域）
+	$(PY) scripts/ontologyctl.py domain ensure --from ./examples/agent_task
+
+run: ensure-domain ## 启动推理 API + Demo 页面（http://127.0.0.1:8000）
 	$(UVICORN) api.main:app --host 127.0.0.1 --port 8000 --reload
 
-mcp: ## 启动 MCP Server（streamable-http，端口 9000）
-	$(PY) mcp/mcp_server.py --domain agent_task --port 9000
+mcp: ensure-domain ## 启动 MCP Server（streamable-http，端口 9000）
+	$(PY) mcp/mcp_server.py --port 9000
 
 test: ## 运行全部测试
 	$(PY) -m pytest tests/ -v

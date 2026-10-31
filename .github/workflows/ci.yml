@@ -44,3 +44,62 @@ jobs:
         run: npm run test
       - name: Build
         run: npm run build
+
+  smoke:
+    # 真实启动路径：干净检出 → 装领域 → import → 起服务 → 打健康检查。
+    # tests/ 会自动用临时领域副本，所以单靠 pytest 无法发现"服务起不来"。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Ensure default domain
+        run: python scripts/ontologyctl.py domain ensure --from ./examples/agent_task
+      - name: Import app
+        run: python -c "import api.main"
+      - name: Boot and probe
+        run: |
+          uvicorn api.main:app --host 127.0.0.1 --port 8000 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/api/health -o /tmp/health.json; then
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8000/api/health
+          python - <<'PY'
+          import json
+          data = json.load(open("/tmp/health.json", encoding="utf-8"))
+          assert data["status"] == "ok", data
+          assert data.get("domain"), data
+          PY
+
+  docker:
+    # 验证镜像自包含：SDK 先于 pip install 拷贝，领域在镜像内安装。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg NPM_REGISTRY=https://registry.npmjs.org \
+            --build-arg PIP_INDEX_URL=https://pypi.org/simple \
+            -t ontology-agent-demo:ci .
+      - name: Run container and probe health
+        run: |
+          docker run -d --name onto-smoke -p 8000:8000 ontology-agent-demo:ci
+          trap 'docker rm -f onto-smoke 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/api/health -o /tmp/health.json; then
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8000/api/health
+          docker exec onto-smoke python -c "import api.main"
