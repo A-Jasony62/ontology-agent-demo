@@ -141,6 +141,15 @@ def test_custom_capability_is_reachable_over_http(fd_api):
     assert "faults" in body
 
 
+def test_custom_capability_accepts_canonical_component_param(fd_api):
+    """公开参数名统一为 component；旧的 asset 仍作为别名保留。"""
+    resp = fd_api.post(
+        "/api/reason", json={"type": "diagnose", "params": {"component": "pump_01"}}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["component"] == "pump_01"
+
+
 def test_custom_capability_rejects_bad_params_as_client_error(fd_api):
     """领域处理器的参数校验失败要变 400，不能冒成 500。
 

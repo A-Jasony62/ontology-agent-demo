@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **启动可用性（#34/#35）**：`make setup/run/mcp`、`scripts/start.sh`、Dockerfile 统一通过 `ontologyctl domain ensure` 准备运行态领域；新增 CI `smoke`（装领域 → import → 起服务 → `/api/health`）与 `docker`（构建 + 容器健康检查）两个 job，避免“单测全绿但服务起不来”
+- **Docker 构建**：`packages/ontology-plugin-sdk` 必须先于 `pip install -r requirements.txt` 拷入镜像（editable 依赖），并在镜像内安装默认领域；`.dockerignore` 排除构建机运行态领域与本地 `config/domain.json`
+- **默认领域（#36）**：首次 `domain install` 自动写入 `config/domain.json`；`domain ensure` 在“多领域无默认 / 默认领域已被删”时给出明确修复命令，不再由服务进程抛出误导性的“请安装领域包”
+- **MCP 启动（#37 及未登记问题）**：移除 `agent_task/mcp.py` 的重复 `@server.tool`；注册期对重复工具名直接失败；`mcp.py` 按文档恢复为可选文件，缺失时仅注册通用工具；MCP 本体路径统一按领域包解析（修复 `fault_diag` 相对 `ONTO_FILE` 按 CWD 查找）
+- **文档与日志（#38）**：README/CONTRIBUTING/指南测试数同步为 411；README 增加 `docs/manual/` 入口；配置回退提示从 `warning` 降为只提示一次的 `info`；`diagnose` 公开参数统一为 `component` 并保留 `asset` / `task` 别名
+
 ## [0.6.0] - 2026-10-30
 
 本轮为「领域包插件化」批次：领域包从"随仓库入库的运行态"改为"可安装的插件"，加载位置与默认领域由配置决定，为后续热加载与多领域铺路。

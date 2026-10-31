@@ -41,6 +41,7 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+_fallback_notified = False
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIRNAME = "config"
@@ -153,19 +154,25 @@ def _load_layers(config_dir: Path) -> tuple[dict, dict[str, str]]:
     if local.is_file():
         return _apply_layer(merged, origins, _read_json(local), LAYER_LOCAL)
 
-    if has_template:
-        logger.warning(
-            "未找到 %s，回退模板 %s（部署时应复制为 %s 后本地化修改）",
-            LOCAL_FILENAME,
-            TEMPLATE_FILENAME,
-            LOCAL_FILENAME,
-        )
-    else:
-        logger.warning(
-            "未找到 %s 与 %s，使用内置默认（root=domains, default=None）",
-            LOCAL_FILENAME,
-            TEMPLATE_FILENAME,
-        )
+    # 回退模板/内置默认是开发期的正常状态，不是错误：用 info 且只提示一次。
+    # 之前用 warning + 每次调用都打，导致 `ontologyctl --json` 的 stderr/stdout
+    # 噪声和 CI 日志污染。
+    global _fallback_notified
+    if not _fallback_notified:
+        if has_template:
+            logger.info(
+                "未找到 %s，回退模板 %s（部署时应复制为 %s 后本地化修改）",
+                LOCAL_FILENAME,
+                TEMPLATE_FILENAME,
+                LOCAL_FILENAME,
+            )
+        else:
+            logger.info(
+                "未找到 %s 与 %s，使用内置默认（root=domains, default=None）",
+                LOCAL_FILENAME,
+                TEMPLATE_FILENAME,
+            )
+        _fallback_notified = True
     return merged, origins
 
 
