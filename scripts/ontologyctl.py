@@ -188,7 +188,11 @@ def _load_cfg(args):
     """
     from config import load_config
 
-    return load_config(cli_root=getattr(args, "to", None), config_dir=_config_dir())
+    return load_config(
+        cli_root=getattr(args, "to", None),
+        config_dir=_config_dir(),
+        project_root=PROJECT_ROOT,
+    )
 
 
 def _installed_meta(root, name: str) -> dict:
@@ -294,27 +298,14 @@ def _domain_uninstall(args) -> dict:
     }
 
 
-def _domain_use(args) -> dict:
-    """把默认领域写进 config/domain.json（本地部署配置，已 gitignore）。
-
-    为什么不直接改内存：默认领域是**部署决策**，要跨进程生效——
-    API 重启、MCP 重启、CLI 内嵌引擎都读同一份配置。写配置文件是唯一
-    能让这三者同时改主意的地方。
-    """
+def _write_default(name: str) -> dict:
+    """把默认领域写进 config/domain.json（以模板为基线，保留其它字段）。"""
     from pathlib import Path
-
-    cfg = _load_cfg(args)
-    name = args.name
-    if name not in cfg.installed():
-        return {"ok": False,
-                "error": f"未安装：{name}；已安装：{cfg.installed() or '（空）'}"}
 
     cfg_dir = Path(_config_dir())
     cfg_dir.mkdir(parents=True, exist_ok=True)
     path = cfg_dir / "domain.json"
     data: dict = {}
-    # 以模板为基线：只写 {"domains":{"default":...}} 会把 root/watch 等字段
-    # 连带覆盖成缺省值，等于顺手改了别的配置。
     template = cfg_dir / "domain.example.json"
     if path.is_file():
         try:
@@ -328,19 +319,127 @@ def _domain_use(args) -> dict:
     domains.setdefault("root", "domains")      # 与内置默认一致；模板缺失时也保持完整
     domains["default"] = name
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {"ok": True, "config": str(path), "default": name}
+
+
+def _domain_use(args) -> dict:
+    """把默认领域写进 config/domain.json（本地部署配置，已 gitignore）。
+
+    为什么不直接改内存：默认领域是**部署决策**，要跨进程生效——
+    API 重启、MCP 重启、CLI 内嵌引擎都读同一份配置。写配置文件是唯一
+    能让这三者同时改主意的地方。
+    """
+    cfg = _load_cfg(args)
+    name = args.name
+    if name not in cfg.installed():
+        return {"ok": False,
+                "error": f"未安装：{name}；已安装：{cfg.installed() or '（空）'}"}
+
+    saved = _write_default(name)
+    if not saved.get("ok"):
+        return saved
     return {
         "ok": True,
         "default": name,
-        "config": str(path),
+        "config": saved["config"],
         "note": ("API 可立即切换：POST /api/domains/{name}/activate；"
                  "MCP 的领域在启动时注册工具，需重启进程才会生效"),
     }
 
 
-def cmd_domain(args) -> dict:
-    """领域包管理：install / list / uninstall / use。"""
+def _domain_install(args) -> dict:
+    """安装领域包；首次安装时自动写默认领域，避免多领域歧义。"""
     from config import ConfigError
     from domains.installer import install
+
+    cfg = _load_cfg(args)
+    explicit_default = cfg.default
+    try:
+        result = install(args.src, root=cfg.root, name=args.name, force=args.force)
+    except ConfigError as exc:
+        return {"ok": False, "error": str(exc)}
+    result.setdefault("ok", True)
+
+    # 仅"首次安装 + 没写过 default + 未显式指定 --to"时自动落默认：
+    # 后续再装第二个领域不会覆盖用户的选择；临时 root 也不该改项目配置。
+    if (result.get("installed")
+            and explicit_default is None
+            and getattr(args, "to", None) is None
+            and not getattr(args, "no_default", False)
+            and len(cfg.installed()) == 1):
+        saved = _write_default(result["name"])
+        if saved.get("ok"):
+            result["default"] = result["name"]
+            result["config"] = saved["config"]
+            result["default_note"] = "首次安装，已自动写入默认领域；可用 domain use 修改"
+        else:
+            result["default_warning"] = saved.get("error")
+
+    result["root"] = str(cfg.root)
+    result["installed_domains"] = cfg.installed()
+    return result
+
+
+def _domain_ensure(args) -> dict:
+    """确保运行态有可用默认领域：无则安装 --from，多个且无默认则报歧义。"""
+    cfg = _load_cfg(args)
+    installed = cfg.installed()
+    current = cfg.effective_default()
+    if current is not None and current in installed:
+        return {
+            "ok": True,
+            "action": "none",
+            "default": current,
+            "root": str(cfg.root),
+            "installed_domains": installed,
+        }
+
+    if installed:
+        stale = (
+            f"配置的默认领域「{current}」未安装。" if current else
+            "运行态已安装多个领域但未指定默认领域。"
+        )
+        return {
+            "ok": False,
+            "action": "ambiguous",
+            "root": str(cfg.root),
+            "installed_domains": installed,
+            "error": (
+                f"{stale}已安装：{', '.join(installed)}。\n"
+                "请执行：python scripts/ontologyctl.py domain use <name>；"
+                "或在启动时传 --domain <name> / 设置 ONTOLOGY_DOMAIN。"
+            ),
+        }
+
+    if not getattr(args, "src", None):
+        return {
+            "ok": False,
+            "action": "missing",
+            "root": str(cfg.root),
+            "error": (
+                "运行态没有任何领域包。\n"
+                "请用 --from <path> 指定来源，例如："
+                "python scripts/ontologyctl.py domain ensure "
+                "--from ./examples/agent_task"
+            ),
+        }
+
+    result = _domain_install(args)
+    if result.get("ok"):
+        result["action"] = "installed"
+        # 配置里的 default 可能悬空（领域目录被手删）；ensure 负责修正。
+        if getattr(args, "to", None) is None and result.get("default") is None:
+            saved = _write_default(result["name"])
+            if saved.get("ok"):
+                result["default"] = result["name"]
+                result["config"] = saved["config"]
+                result["default_note"] = "已修正为当前安装领域"
+    return result
+
+
+def cmd_domain(args) -> dict:
+    """领域包管理：install / ensure / list / uninstall / use。"""
+    from config import ConfigError
 
     action = getattr(args, "domain_action", None)
     try:
@@ -350,16 +449,13 @@ def cmd_domain(args) -> dict:
             return _domain_uninstall(args)
         if action == "use":
             return _domain_use(args)
-        if action != "install":
-            return {"ok": False, "error": f"不支持的 domain 操作：{action}"}
-        cfg = _load_cfg(args)
-        result = install(args.src, root=cfg.root, name=args.name, force=args.force)
+        if action == "ensure":
+            return _domain_ensure(args)
+        if action == "install":
+            return _domain_install(args)
+        return {"ok": False, "error": f"不支持的 domain 操作：{action}"}
     except ConfigError as exc:
         return {"ok": False, "error": str(exc)}
-
-    result["root"] = str(cfg.root)
-    result["installed_domains"] = cfg.installed()
-    return result
 
 
 SUBCOMMANDS = {
@@ -369,7 +465,7 @@ SUBCOMMANDS = {
     "diff": (cmd_diff, "未提交变更预览（服务 changelog + git status）"),
     "rollback": (cmd_rollback, "git checkout 本体文件并 reload（可指定 tag）"),
     "log": (cmd_log, "git log（本体相关）+ 服务 changelog + tags"),
-    "domain": (cmd_domain, "领域包管理：install --from <path> / list [--scan DIR] / uninstall N / use N"),
+    "domain": (cmd_domain, "领域包管理：install --from <path> / ensure --from <path> / list [--scan DIR] / uninstall N / use N"),
 }
 
 
@@ -385,6 +481,19 @@ def _add_domain_actions(parser, common) -> None:
     inst.add_argument("--name", default=None, help="安装名（缺省取源目录名）")
     inst.add_argument("--to", default=None, help="目标 root（缺省取配置 domains.root）")
     inst.add_argument("--force", action="store_true", help="覆盖已安装版本（先备份）")
+    inst.add_argument("--no-default", action="store_true",
+                      help="首次安装时不自动写入默认领域（默认会写）")
+
+    ensure = dsub.add_parser(
+        "ensure", help="确保有可用默认领域；无安装时从 --from 安装", parents=[common]
+    )
+    ensure.add_argument("--from", dest="src", default=None,
+                        help="无领域时安装的源目录（相对当前目录或绝对路径）")
+    ensure.add_argument("--name", default=None, help="安装名（缺省取源目录名）")
+    ensure.add_argument("--to", default=None, help="目标 root（缺省取配置 domains.root）")
+    ensure.add_argument("--force", action="store_true", help="覆盖已安装版本（先备份）")
+    ensure.add_argument("--no-default", action="store_true",
+                        help="安装时不自动写入默认领域（不推荐）")
 
     lst = dsub.add_parser("list", help="列出已安装领域（可扫描候选目录）", parents=[common])
     lst.add_argument("--to", default=None, help="目标 root（缺省取配置 domains.root）")
@@ -423,7 +532,7 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(json.dumps(result, ensure_ascii=False, indent=2))   # 结构化文本（默认也输出 JSON）
-    return 0
+    return 0 if result.get("ok", True) else 1
 
 
 if __name__ == "__main__":
